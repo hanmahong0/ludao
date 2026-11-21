@@ -1,0 +1,81 @@
+{
+  "_doc": "案由要件结构 DSL（server-config）。建设工程施工合同纠纷。与 private-lending.json 同结构。",
+  "_compliance_gate": "要件为种子内容，须由资深律师/法务对照现行有效法律与裁判口径逐项精修核定后方可作准。",
+  "kind": "claim-elements",
+  "config_id": "construction_contract",
+  "caseType": "construction_contract",
+  "caseTypeLabel": "建设工程施工合同纠纷",
+  "schemaVersion": 2,
+  "version": "2026.06.1",
+  "effectiveFrom": "2026-06-01",
+  "templateRefs": ["evidence_list_v5", "cross_exam_table_v2"],
+
+  "elements": [
+    {
+      "id": "construction_contract_formed",
+      "name": "施工合同关系成立",
+      "provesFact": "双方就建设工程施工达成合同关系",
+      "requiredEvidence": ["建设工程施工合同", "中标通知书", "补充协议/会议纪要"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺施工合同关系成立的证据（书面施工合同或中标文件）。",
+      "suggest": "补充施工合同、中标通知书或能确立施工合意的补充协议。"
+    },
+    {
+      "id": "work_completed",
+      "name": "工程施工/完工进度",
+      "provesFact": "工程实际施工范围与完工/进度情况",
+      "requiredEvidence": ["竣工验收报告", "形象进度/监理记录", "签证/工程量确认"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "缺工程施工/完工进度证据，工程量与进度可能难以认定。",
+      "suggest": "补充竣工验收、监理记录、工程量签证等进度与范围证据。"
+    },
+    {
+      "id": "settlement",
+      "name": "工程款结算",
+      "provesFact": "工程款结算金额与欠付情况",
+      "requiredEvidence": ["结算书/对账", "审计/造价报告", "已付款凭证"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "缺工程款结算的确认证据，欠付金额可能难以认定。",
+      "suggest": "补充双方确认的结算书/对账，或造价审计报告及已付款凭证。"
+    },
+    {
+      "id": "quality_acceptance",
+      "name": "质量与竣工验收",
+      "provesFact": "工程质量合格、竣工验收情况",
+      "requiredEvidence": ["竣工验收备案", "质量合格证明", "整改/缺陷记录"],
+      "satisfyRule": "any",
+      "severity": "info",
+      "gapPrompt": "缺质量与竣工验收证据；面对质量抗辩或主张质保金时较被动。",
+      "suggest": "补充竣工验收备案、质量合格证明及（如有）整改记录。"
+    }
+  ],
+
+  "gapRules": [
+    {
+      "id": "gap_no_construction_contract",
+      "severity": "critical",
+      "when": "!has('construction_contract_formed')",
+      "explain": "施工合同关系是请求的基础；缺合同关系证据将直接影响全部请求的支持。",
+      "elementRef": "construction_contract_formed"
+    },
+    {
+      "id": "gap_settlement_unconfirmed",
+      "severity": "warning",
+      "when": "!has('settlement')",
+      "explain": "缺结算/对账/造价证据，欠付工程款金额难以认定，建议补强。",
+      "elementRef": "settlement"
+    },
+    {
+      "id": "gap_no_work_evidence",
+      "severity": "warning",
+      "when": "!has('work_completed')",
+      "explain": "缺施工/完工进度证据，工程量与履行情况不清。",
+      "elementRef": "work_completed"
+    }
+  ],
+
+  "_cel_notes": "host_functions 同 private-lending.json；gapRules 仅用 has()，不依赖案由特定 claim.* 字段。"
+}

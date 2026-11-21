@@ -1,0 +1,81 @@
+{
+  "_doc": "案由要件结构 DSL（server-config）。提供劳务者受害责任纠纷（个人之间劳务，提供劳务一方受害）。",
+  "_compliance_gate": "要件为种子内容，须由资深律师/法务对照现行有效法律与裁判口径逐项精修核定后方可作准。",
+  "kind": "claim-elements",
+  "config_id": "labor_service_injury",
+  "caseType": "labor_service_injury",
+  "caseTypeLabel": "提供劳务者受害责任纠纷",
+  "schemaVersion": 2,
+  "version": "2026.06.1",
+  "effectiveFrom": "2026-06-01",
+  "templateRefs": ["evidence_list_v5", "cross_exam_table_v2"],
+
+  "elements": [
+    {
+      "id": "service_relationship",
+      "name": "个人劳务关系",
+      "provesFact": "当事人之间存在个人之间的劳务（雇佣/帮工）关系",
+      "requiredEvidence": ["雇佣/帮工约定", "工钱支付记录", "在场证人证言"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺个人劳务关系的证据；劳务关系不成立则按份责任基础不存在。",
+      "suggest": "补充雇佣/帮工约定、工钱支付记录或在场证人证言。"
+    },
+    {
+      "id": "injury_fact",
+      "name": "受害事实与伤情",
+      "provesFact": "提供劳务一方在劳务中受害的事实与伤情程度",
+      "requiredEvidence": ["病历/诊断证明", "伤残等级鉴定", "事故经过记录"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺受害事实与伤情证据；损害事实未证明将直接影响请求。",
+      "suggest": "补充病历、诊断证明、伤残鉴定及事故经过记录。"
+    },
+    {
+      "id": "causation_fault",
+      "name": "因果关系与双方过错",
+      "provesFact": "受害与劳务的因果关系及双方各自过错",
+      "requiredEvidence": ["现场/工具/防护证据", "证人证言", "责任划分材料"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "缺因果与过错证据，按份责任比例可能难以认定。",
+      "suggest": "补充现场、工具、防护措施证据及证人证言以厘清因果与过错。"
+    },
+    {
+      "id": "damages_items",
+      "name": "赔偿项目与数额",
+      "provesFact": "医疗费、误工费、护理费、伤残赔偿等项目与数额",
+      "requiredEvidence": ["医疗费票据", "误工/护理证明", "伤残赔偿计算依据"],
+      "satisfyRule": "any",
+      "severity": "info",
+      "gapPrompt": "缺赔偿项目票据/计算依据，赔偿数额难以主张。",
+      "suggest": "补充医疗费票据、误工护理证明及伤残赔偿计算依据。"
+    }
+  ],
+
+  "gapRules": [
+    {
+      "id": "gap_no_service_relationship",
+      "severity": "critical",
+      "when": "!has('service_relationship')",
+      "explain": "劳务关系是按份责任的基础；缺关系证据将直接影响请求。",
+      "elementRef": "service_relationship"
+    },
+    {
+      "id": "gap_no_injury_fact",
+      "severity": "critical",
+      "when": "!has('injury_fact')",
+      "explain": "损害事实是请求的前提；缺伤情证据将直接影响请求。",
+      "elementRef": "injury_fact"
+    },
+    {
+      "id": "gap_causation_unconfirmed",
+      "severity": "warning",
+      "when": "!has('causation_fault')",
+      "explain": "缺因果与过错证据，责任比例难以认定，建议补强。",
+      "elementRef": "causation_fault"
+    }
+  ],
+
+  "_cel_notes": "host_functions 同 private-lending.json；gapRules 仅用 has()，不依赖案由特定 claim.* 字段。"
+}

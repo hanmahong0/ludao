@@ -1,0 +1,64 @@
+{
+  "_doc": "2026 年法定节假日表（server-config 热更）。引擎据此做末日顺延：statutory_holiday=顺延，makeup_workday=算工作日。",
+  "_source": "国务院办公厅 2026 年部分节假日安排通知（2025-11-04 发布）；经多方公开来源交叉核对。",
+  "_compliance_gate": "★ D3 硬门禁：上线前由指定 owner 对照国务院办公厅原文逐条核对；引擎遇『缺当年表却跨该年计算』必须拒算+告警，绝不用上一年表硬算。",
+  "_verification_status": "draft-待法务核对：7 个假期区间与 4 个调休日已由公开来源确认；国庆(10/1-7)与中秋(9/25-27)前后的调休补班日来源未完整列出，标记为 NEEDS_VERIFICATION，核对前不得用于跨该区间计算。",
+  "kind": "holidays",
+  "config_id": "cn-statutory-2026",
+  "schemaVersion": 1,
+  "version": "2026.1",
+  "effectiveFrom": "2026-01-01",
+  "tableId": "cn-statutory-2026",
+  "year": 2026,
+  "validFrom": "2026-01-01",
+  "validTo": "2026-12-31",
+  "days": [
+    { "date": "2026-01-01", "type": "statutory_holiday", "name": "元旦" },
+    { "date": "2026-01-02", "type": "statutory_holiday", "name": "元旦" },
+    { "date": "2026-01-03", "type": "statutory_holiday", "name": "元旦" },
+    { "date": "2026-01-04", "type": "makeup_workday", "name": "元旦调休补班(周日)" },
+
+    { "date": "2026-02-14", "type": "makeup_workday", "name": "春节调休补班(周六)" },
+    { "date": "2026-02-15", "type": "statutory_holiday", "name": "春节" },
+    { "date": "2026-02-16", "type": "statutory_holiday", "name": "春节(除夕)" },
+    { "date": "2026-02-17", "type": "statutory_holiday", "name": "春节(初一)" },
+    { "date": "2026-02-18", "type": "statutory_holiday", "name": "春节" },
+    { "date": "2026-02-19", "type": "statutory_holiday", "name": "春节" },
+    { "date": "2026-02-20", "type": "statutory_holiday", "name": "春节" },
+    { "date": "2026-02-21", "type": "statutory_holiday", "name": "春节" },
+    { "date": "2026-02-22", "type": "statutory_holiday", "name": "春节" },
+    { "date": "2026-02-23", "type": "statutory_holiday", "name": "春节" },
+    { "date": "2026-02-28", "type": "makeup_workday", "name": "春节调休补班(周六)" },
+
+    { "date": "2026-04-04", "type": "statutory_holiday", "name": "清明节" },
+    { "date": "2026-04-05", "type": "statutory_holiday", "name": "清明节" },
+    { "date": "2026-04-06", "type": "statutory_holiday", "name": "清明节" },
+
+    { "date": "2026-05-01", "type": "statutory_holiday", "name": "劳动节" },
+    { "date": "2026-05-02", "type": "statutory_holiday", "name": "劳动节" },
+    { "date": "2026-05-03", "type": "statutory_holiday", "name": "劳动节" },
+    { "date": "2026-05-04", "type": "statutory_holiday", "name": "劳动节" },
+    { "date": "2026-05-05", "type": "statutory_holiday", "name": "劳动节" },
+    { "date": "2026-05-09", "type": "makeup_workday", "name": "劳动节调休补班(周六)" },
+
+    { "date": "2026-06-19", "type": "statutory_holiday", "name": "端午节" },
+    { "date": "2026-06-20", "type": "statutory_holiday", "name": "端午节" },
+    { "date": "2026-06-21", "type": "statutory_holiday", "name": "端午节" },
+
+    { "date": "2026-09-25", "type": "statutory_holiday", "name": "中秋节" },
+    { "date": "2026-09-26", "type": "statutory_holiday", "name": "中秋节" },
+    { "date": "2026-09-27", "type": "statutory_holiday", "name": "中秋节" },
+
+    { "date": "2026-10-01", "type": "statutory_holiday", "name": "国庆节" },
+    { "date": "2026-10-02", "type": "statutory_holiday", "name": "国庆节" },
+    { "date": "2026-10-03", "type": "statutory_holiday", "name": "国庆节" },
+    { "date": "2026-10-04", "type": "statutory_holiday", "name": "国庆节" },
+    { "date": "2026-10-05", "type": "statutory_holiday", "name": "国庆节" },
+    { "date": "2026-10-06", "type": "statutory_holiday", "name": "国庆节" },
+    { "date": "2026-10-07", "type": "statutory_holiday", "name": "国庆节" }
+  ],
+  "needsVerification": [
+    "国庆节(10/1-7)前后的调休补班日（来源称全年共6个调休日，已确认4个：01-04、02-14、02-28、05-09，国庆/中秋相关的剩余调休日须对照原文补全）",
+    "中秋(9/25-27)与国庆(10/1-7)是否衔接及衔接处的工作日安排"
+  ]
+}

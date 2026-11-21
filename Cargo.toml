@@ -1,0 +1,19 @@
+# Rust workspace 根。三个核心 crate 共享一个 target/，
+# 让 vendored OpenSSL/SQLCipher 只编译一次，供所有成员（含未来 apps/desktop/src-tauri）复用。
+#
+# 构建注意：凡依赖 core（→ rusqlite bundled-sqlcipher-vendored-openssl）的成员，
+# 必须用 tools/msvc-cargo.bat（vcvars64 + Strawberry Perl）构建；
+# 仅 deadline-engine / gap-engine（无 SQLCipher）可用普通 cargo。
+[workspace]
+resolver = "2"
+members = [
+  "crates/deadline-engine",
+  "crates/core",
+  "crates/gap-engine",
+  "apps/desktop/src-tauri",
+]
+
+[profile.dev]
+# 加密/向量等原生依赖较重，开发期对依赖开优化以缩短运行/测试耗时（增量编译仍快）。
+[profile.dev.package."*"]
+opt-level = 1

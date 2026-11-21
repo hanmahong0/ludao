@@ -1,0 +1,25 @@
+{
+  "component": "zeroclaw-runtime",
+  "repository": "https://github.com/zeroclaw-labs/zeroclaw",
+  "tag": "v0.9.0",
+  "commit": "6c78ba59bce6a3d5079cf0c0310488770e264ad4",
+  "released_at": "2026-11-11T22:02:00Z",
+  "license": "MIT OR Apache-2.0",
+  "assets": {
+    "x86_64-unknown-linux-gnu": {
+      "name": "zeroclaw-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "ce9cdfd3d419ff2ee668b0741d4cea41eaee9c637c6f590c3faf3e37b6507db9",
+      "url": "https://github.com/zeroclaw-labs/zeroclaw/releases/download/v0.9.0/zeroclaw-x86_64-unknown-linux-gnu.tar.gz"
+    },
+    "x86_64-pc-windows-msvc": {
+      "name": "zeroclaw-x86_64-pc-windows-msvc.zip",
+      "sha256": "f81fd10b8663c22b3f7c66e622f5f7249a2404a6973c32a5bd7f4af86a2afd6d",
+      "source": "https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/tags/v0.9.0"
+    }
+  },
+  "rpc": {
+    "protocolVersion": 1,
+    "transport": "ndjson",
+    "doc_ref": "https://github.com/zeroclaw-labs/zeroclaw/blob/6c78ba59bce6a3d5079cf0c0310488770e264ad4/docs/book/src/architecture/rpc-socket.md"
+  }
+}

@@ -1,0 +1,17 @@
+[package]
+name = "core"
+version = "0.1.0"
+edition = "2021"
+description = "Local encrypted case vault (SQLCipher) — schema bootstrap, append-only custody log, version gate."
+
+[dependencies]
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"] }
+# 配置信封：Ed25519 验签 + base64 编码 + SHA-256（监管链 payload_hash / 未来证据原件哈希）。
+ed25519-dalek = "2"
+base64 = "0.22"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

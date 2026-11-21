@@ -1,0 +1,34 @@
+[package]
+name = "lurus-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Tauri 2 shell wiring react-ui to the local Rust core / deadline / gap engines."
+
+# 库 + 二进制：命令处理函数放 lib，便于 tests/ 与 webview 之外的集成测试直接调用（验收 §2）。
+[lib]
+name = "lurus_desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "lurus-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 直接引用 rusqlite 类型(Connection/Result)；version 随 core，bundled-sqlcipher 特性由 core 在 workspace 内统一。
+rusqlite = "0.31"
+chrono = "0.4"               # 直接用 chrono::NaiveDate(commands/config_map)；随 deadline-engine 统一
+
+# 真实 Rust 库（path 依赖，不改其源码）。
+vault = { path = "../../../crates/core", package = "core" }   # 依赖名改 vault：避免与 Rust 内置 core crate 冲突(tauri 宏展开 core::option 会被同名依赖遮蔽)
+deadline-engine = { path = "../../../crates/deadline-engine" }
+gap-engine = { path = "../../../crates/gap-engine" }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"

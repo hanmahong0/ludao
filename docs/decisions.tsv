@@ -1,0 +1,9 @@
+id	timestamp	decision	rationale	evidence_path
+D001	2026-11-21T13:30:00Z	sanitized-source zip SHA256 0708b835…cb032 校验通过后导入	用户交接白名单	/home/ubuntu/.cursor/projects/workspace/uploads/sanitized-source_6c18.zip
+D002	2026-11-21T13:35:00Z	EXPORT_NOTES 不进入 public repo	避免交接审计路径公开	/workspace/（已排除）
+D003	2026-11-21T13:40:00Z	重建 config.rs/db.rs/ipc.ts 与合成模板	config/dev 信任分离；缺模块无法构建	/workspace/crates/core/src/config.rs
+D004	2026-11-21T13:45:00Z	ZeroClaw 固定 v0.9.0@6c78ba59，助手默认关闭	禁止 latest 与未验签二进制	/workspace/vendor/zeroclaw.lock.json
+D005	2026-11-21T13:50:00Z	类案 MVP 使用 synthetic fixture + FTS/LIKE	无授权 API，不虚构爬虫	/workspace/apps/desktop/src-tauri/src/db.rs
+D006	2026-11-21T13:55:00Z	未添加整库 MIT LICENSE	第一方未选开源许可证	/workspace/README.md
+D007	2026-11-21T14:00:00Z	Linux ZeroClaw tar.gz SHA256 ce9cdfd3… 已核对	Release API digest	/workspace/vendor/zeroclaw.lock.json
+D008	2026-11-21T14:05:00Z	Unix socket RPC initialize 握手成功	server_version=0.9.0 protocol_version=1	/tmp handshake log（见 PR Verification）

@@ -1,0 +1,81 @@
+{
+  "_doc": "案由要件结构 DSL（server-config）。信用卡纠纷（银行信用卡透支，区别于金融借款/民间借贷）。",
+  "_compliance_gate": "要件为种子内容，须由资深律师/法务对照现行有效法律与裁判口径逐项精修核定后方可作准。",
+  "kind": "claim-elements",
+  "config_id": "credit_card",
+  "caseType": "credit_card",
+  "caseTypeLabel": "信用卡纠纷",
+  "schemaVersion": 2,
+  "version": "2026.06.1",
+  "effectiveFrom": "2026-06-01",
+  "templateRefs": ["evidence_list_v5", "cross_exam_table_v2"],
+
+  "elements": [
+    {
+      "id": "card_agreement",
+      "name": "信用卡领用合约关系",
+      "provesFact": "持卡人与发卡行之间的领用合约关系",
+      "requiredEvidence": ["信用卡领用合约/申请表", "领用合约章程", "电子签约与认证记录"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺信用卡领用合约关系的证据（领用合约或申请表）。",
+      "suggest": "补充领用合约、申请表及章程；电子签约补认证与签署记录。"
+    },
+    {
+      "id": "overdraft_fact",
+      "name": "透支与消费事实",
+      "provesFact": "持卡人透支用款的事实与金额",
+      "requiredEvidence": ["对账单", "交易/消费明细", "取现/分期记录"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺透支与消费事实证据；透支本金未证明将直接影响请求。",
+      "suggest": "补充完整对账单、交易消费明细及取现/分期记录。"
+    },
+    {
+      "id": "repayment_status",
+      "name": "还款与欠款情况",
+      "provesFact": "持卡人还款与欠款的事实及金额",
+      "requiredEvidence": ["还款记录", "欠款明细", "催收/催记"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "缺还款/欠款明细，欠付本息与费用可能难以认定。",
+      "suggest": "补充还款台账、欠款明细及催收记录。"
+    },
+    {
+      "id": "charges_basis",
+      "name": "利息/违约金/分期费依据",
+      "provesFact": "所主张利息、违约金、分期手续费的约定依据",
+      "requiredEvidence": ["合约费率条款", "计费规则告知", "费用计算明细"],
+      "satisfyRule": "any",
+      "severity": "info",
+      "gapPrompt": "缺费率/计费依据；过高或无据的利息违约金部分可能被调减或不支持。",
+      "suggest": "补充合约费率条款、计费规则告知及费用计算明细。"
+    }
+  ],
+
+  "gapRules": [
+    {
+      "id": "gap_no_card_agreement",
+      "severity": "critical",
+      "when": "!has('card_agreement')",
+      "explain": "领用合约关系是请求的基础；缺合约/申请表将直接影响全部请求。",
+      "elementRef": "card_agreement"
+    },
+    {
+      "id": "gap_no_overdraft_fact",
+      "severity": "critical",
+      "when": "!has('overdraft_fact')",
+      "explain": "透支事实是本金请求的前提；缺对账/消费明细将直接影响本金支持。",
+      "elementRef": "overdraft_fact"
+    },
+    {
+      "id": "gap_repayment_unconfirmed",
+      "severity": "warning",
+      "when": "!has('repayment_status')",
+      "explain": "缺还款/欠款明细，欠付金额难以认定，建议补强。",
+      "elementRef": "repayment_status"
+    }
+  ],
+
+  "_cel_notes": "host_functions 同 private-lending.json；gapRules 仅用 has()，不依赖案由特定 claim.* 字段。"
+}
