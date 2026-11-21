@@ -1,0 +1,30 @@
+{
+  "kind": "template",
+  "config_id": "civil_complaint",
+  "schemaVersion": 1,
+  "version": "2026.06.1",
+  "effectiveFrom": "2026-06-01",
+  "docType": "civil_complaint",
+  "title": "民事起诉状（合成模板）",
+  "_compliance_gate": "合成占位模板，须由律师按管辖与案由复核后使用。",
+  "sections": [
+    {
+      "heading": "当事人",
+      "body": "原告：{{plaintiff}}\n被告：{{defendant}}"
+    },
+    {
+      "heading": "诉讼请求",
+      "body": "1. 请求判令被告偿还借款本金 {{principal}} 元及利息；\n2. 本案诉讼费用由被告承担。"
+    },
+    {
+      "heading": "事实与理由",
+      "body": "{{facts}}"
+    }
+  ],
+  "placeholders": [
+    { "key": "plaintiff", "label": "原告", "source": "case.parties" },
+    { "key": "defendant", "label": "被告", "source": "case.parties" },
+    { "key": "principal", "label": "本金", "source": "case.amount" },
+    { "key": "facts", "label": "事实摘要", "source": "manual" }
+  ]
+}

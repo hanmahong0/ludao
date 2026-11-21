@@ -1,0 +1,81 @@
+{
+  "_doc": "案由要件结构 DSL（server-config）。物业服务合同纠纷。与 private-lending.json 同结构。",
+  "_compliance_gate": "要件为种子内容，须由资深律师/法务对照现行有效法律与裁判口径逐项精修核定后方可作准。",
+  "kind": "claim-elements",
+  "config_id": "property_management",
+  "caseType": "property_management",
+  "caseTypeLabel": "物业服务合同纠纷",
+  "schemaVersion": 2,
+  "version": "2026.06.1",
+  "effectiveFrom": "2026-06-01",
+  "templateRefs": ["evidence_list_v5", "cross_exam_table_v2"],
+
+  "elements": [
+    {
+      "id": "pm_relationship",
+      "name": "物业服务合同关系成立",
+      "provesFact": "物业服务企业与业主/使用人之间存在物业服务合同关系",
+      "requiredEvidence": ["物业服务合同", "前期物业服务协议", "业主公约/管理规约"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺物业服务合同关系成立的证据（书面合同或前期物业协议）。",
+      "suggest": "补充物业服务合同、前期物业服务协议或业主公约等能确立服务关系的文件。"
+    },
+    {
+      "id": "service_provided",
+      "name": "物业服务的实际提供",
+      "provesFact": "物业服务企业已按约提供物业服务",
+      "requiredEvidence": ["巡查/保洁/绿化/安保记录", "维修养护台账", "业主沟通/通知记录"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "缺物业服务实际提供的证据，服务履行情况可能受质疑（业主常以服务瑕疵抗辩）。",
+      "suggest": "补充日常服务台账、维修养护记录及业主通知/沟通记录。"
+    },
+    {
+      "id": "fee_owed",
+      "name": "物业费欠付情况",
+      "provesFact": "业主欠付物业费的事实与金额",
+      "requiredEvidence": ["收费标准依据", "欠费明细/对账", "催缴通知"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "缺欠费金额的确认证据（收费标准/对账/催缴），欠付金额可能难以认定。",
+      "suggest": "补充收费标准依据、欠费明细及催缴通知（短信/书面/公告）。"
+    },
+    {
+      "id": "fee_standard",
+      "name": "收费标准合法性",
+      "provesFact": "所主张的物业费标准合法有据",
+      "requiredEvidence": ["价格主管部门备案", "业主大会决定", "合同约定标准"],
+      "satisfyRule": "any",
+      "severity": "info",
+      "gapPrompt": "缺收费标准合法性依据；标准无据的部分可能不予支持。",
+      "suggest": "补充政府指导价备案、业主大会决定或合同约定的收费标准。"
+    }
+  ],
+
+  "gapRules": [
+    {
+      "id": "gap_no_pm_relationship",
+      "severity": "critical",
+      "when": "!has('pm_relationship')",
+      "explain": "物业服务合同关系是请求的基础；缺关系成立的证据将直接影响全部请求的支持。",
+      "elementRef": "pm_relationship"
+    },
+    {
+      "id": "gap_fee_unconfirmed",
+      "severity": "warning",
+      "when": "!has('fee_owed')",
+      "explain": "缺收费标准/对账/催缴，欠付物业费金额难以认定，建议补强。",
+      "elementRef": "fee_owed"
+    },
+    {
+      "id": "gap_no_service_evidence",
+      "severity": "warning",
+      "when": "!has('service_provided')",
+      "explain": "缺物业服务实际提供的证据，面对服务瑕疵抗辩时较为被动。",
+      "elementRef": "service_provided"
+    }
+  ],
+
+  "_cel_notes": "host_functions 同 private-lending.json；gapRules 仅用 has()，不依赖案由特定 claim.* 字段。"
+}

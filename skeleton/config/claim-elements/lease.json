@@ -1,0 +1,81 @@
+{
+  "_doc": "案由要件结构 DSL（server-config）。房屋租赁合同纠纷。与 private-lending.json 同结构。",
+  "_compliance_gate": "要件为种子内容，须由资深律师/法务对照现行有效法律与裁判口径逐项精修核定后方可作准。",
+  "kind": "claim-elements",
+  "config_id": "lease",
+  "caseType": "lease",
+  "caseTypeLabel": "房屋租赁合同纠纷",
+  "schemaVersion": 2,
+  "version": "2026.06.1",
+  "effectiveFrom": "2026-06-01",
+  "templateRefs": ["evidence_list_v5", "cross_exam_table_v2"],
+
+  "elements": [
+    {
+      "id": "lease_relationship",
+      "name": "房屋租赁合同关系成立",
+      "provesFact": "双方就租赁房屋、租金、期限达成租赁合意",
+      "requiredEvidence": ["房屋租赁合同", "微信/书面租赁约定", "出租人房屋权属或转租授权"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺房屋租赁合同关系成立的证据（书面合同或租赁合意往来）。",
+      "suggest": "补充书面租赁合同，或能体现租赁合意的微信/聊天记录；涉转租的补出租人同意。"
+    },
+    {
+      "id": "property_delivery",
+      "name": "房屋交付/占有",
+      "provesFact": "出租人已交付房屋、承租人实际占有使用",
+      "requiredEvidence": ["交房交接单", "入住或占有凭证", "水电气过户/开户记录"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "缺房屋交付/占有的证据，交付与占有事实可能不清。",
+      "suggest": "补充交房交接单、入住凭证或水电开户记录。"
+    },
+    {
+      "id": "rent_status",
+      "name": "租金支付/欠付情况",
+      "provesFact": "承租人欠付租金的事实与金额",
+      "requiredEvidence": ["对账记录", "租金转账记录", "催租通知", "欠租确认"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "缺欠付租金的确认证据（对账/转账/催租），欠付金额可能难以认定。",
+      "suggest": "补充双方确认的对账或欠租记录，保留催租通知。"
+    },
+    {
+      "id": "termination_ground",
+      "name": "解除/腾退事由",
+      "provesFact": "存在解除合同或要求腾退的法定/约定事由",
+      "requiredEvidence": ["催告函", "解除通知", "逾期欠租/违约记录"],
+      "satisfyRule": "any",
+      "severity": "info",
+      "gapPrompt": "涉解除或腾退但缺催告/解除/违约事由证据。",
+      "suggest": "补充催告函、解除通知及逾期欠租或其他违约事实的记录。"
+    }
+  ],
+
+  "gapRules": [
+    {
+      "id": "gap_no_lease_relationship",
+      "severity": "critical",
+      "when": "!has('lease_relationship')",
+      "explain": "租赁法律关系是请求的基础；缺合同关系成立的证据将直接影响全部请求的支持。",
+      "elementRef": "lease_relationship"
+    },
+    {
+      "id": "gap_rent_unconfirmed",
+      "severity": "warning",
+      "when": "!has('rent_status')",
+      "explain": "缺对账/转账/催租，欠付租金金额难以认定，建议补强。",
+      "elementRef": "rent_status"
+    },
+    {
+      "id": "gap_no_property_delivery",
+      "severity": "warning",
+      "when": "!has('property_delivery')",
+      "explain": "缺房屋交付/占有证据，交付与占有事实不清，可能影响租金或腾退主张。",
+      "elementRef": "property_delivery"
+    }
+  ],
+
+  "_cel_notes": "host_functions 同 private-lending.json；gapRules 仅用 has()，不依赖案由特定 claim.* 字段。"
+}

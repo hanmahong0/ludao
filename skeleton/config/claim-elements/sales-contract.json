@@ -1,0 +1,74 @@
+{
+  "_doc": "案由要件结构 DSL（server-config）。买卖合同纠纷。与 private-lending.json 同结构。",
+  "kind": "claim-elements",
+  "config_id": "sales_contract",
+  "caseType": "sales_contract",
+  "caseTypeLabel": "买卖合同纠纷",
+  "schemaVersion": 2,
+  "version": "2026.06.1",
+  "effectiveFrom": "2026-06-01",
+  "templateRefs": ["evidence_list_v5", "cross_exam_table_v2", "complaint_sales_contract_v2"],
+
+  "elements": [
+    {
+      "id": "contract_formed",
+      "name": "买卖合同关系成立",
+      "provesFact": "双方就标的物、价款达成买卖合意",
+      "requiredEvidence": ["买卖合同/订货单/采购单", "微信/邮件中的要约承诺", "交易习惯佐证"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺买卖合同关系成立的证据（书面合同或要约承诺往来）。",
+      "suggest": "补充书面合同、订货单，或能体现成交合意的微信/邮件记录。"
+    },
+    {
+      "id": "seller_delivery",
+      "name": "标的物交付（卖方履行）",
+      "provesFact": "卖方已按约交付标的物",
+      "requiredEvidence": ["送货单/签收单", "物流承运记录", "验收单"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "主张货款但缺交付凭证；卖方须证明已按约交付标的物。",
+      "suggest": "补充签收单/送货单/物流签收记录；无签收的可补充对账记录或收货方确认。"
+    },
+    {
+      "id": "payment_status",
+      "name": "货款支付/欠付情况",
+      "provesFact": "买方未付或欠付货款的事实与金额",
+      "requiredEvidence": ["对账单", "欠条/付款承诺", "已付部分的转账记录"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "缺欠款金额的确认证据（对账单/欠条），金额可能难以认定。",
+      "suggest": "补充双方盖章/签字的对账单或欠款确认；保留催款记录。"
+    },
+    {
+      "id": "quality_defense",
+      "name": "质量异议（抗辩/反诉相关）",
+      "provesFact": "标的物质量是否符合约定",
+      "requiredEvidence": ["验收记录", "质量检测报告", "异议通知"],
+      "satisfyRule": "any",
+      "severity": "info",
+      "appliesWhen": "claim.has_quality_issue == true",
+      "gapPrompt": "涉质量争议但缺验收/检测/及时异议证据；逾期未提质量异议可能视为符合约定。",
+      "suggest": "补充收货验收记录、质量检测报告及在合理期限内提出异议的通知。"
+    }
+  ],
+
+  "gapRules": [
+    {
+      "id": "gap_payment_no_delivery",
+      "severity": "critical",
+      "when": "claim.type == 'recover_payment' && !has('seller_delivery')",
+      "explain": "主张货款须先证明已交付标的物；缺交付凭证将直接影响货款请求的支持。",
+      "elementRef": "seller_delivery"
+    },
+    {
+      "id": "gap_amount_unconfirmed",
+      "severity": "warning",
+      "when": "!has('payment_status')",
+      "explain": "缺对账/欠款确认，欠付金额难以认定，建议补强。",
+      "elementRef": "payment_status"
+    }
+  ],
+
+  "_cel_notes": "host_functions 同 private-lending.json；门控 critical 要件走 CEL+golden 测试。"
+}

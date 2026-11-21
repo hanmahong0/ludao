@@ -1,0 +1,19 @@
+{
+  "name": "luruslow",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "律师 Agent 桌面客户端 — workspace 根 (验证闸: 引擎golden / 配置校验 / 红线CI)。",
+  "scripts": {
+    "engine:test": "cargo test -p deadline-engine -p gap-engine",
+    "validate:config": "node scripts/validate-config.mjs",
+    "cloud:typecheck": "npm --prefix services/cloud run typecheck",
+    "cloud:guards": "npm --prefix services/cloud run smoke:guards",
+    "redline": "bash tools/redline-check.sh",
+    "check": "npm run engine:test && npm run validate:config && npm run cloud:typecheck && npm run cloud:guards && npm run redline"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  }
+}

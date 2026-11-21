@@ -1,0 +1,16 @@
+id	timestamp	decision	rationale	evidence_path
+D001	2026-11-21T13:30:00Z	导入白名单 zip SHA256 0708b835…cb032 校验通过	用户交接白名单	审查附件（未写入仓库路径）
+D002	2026-11-21T13:35:00Z	EXPORT_NOTES 不进入 public repo	避免交接审计路径公开	仓库策略
+D003	2026-11-21T14:40:00Z	supersedes D003-old：config 默认 fail-closed；dev 须 LUDAO_CONFIG_DEV_TRUST+DEV_SEED	Grok B1	crates/core/src/config.rs
+D004	2026-11-21T13:45:00Z	ZeroClaw 固定 v0.9.0@6c78ba59	禁止 latest	vendor/zeroclaw.lock.json
+D005	2026-11-21T13:50:00Z	类案 MVP 合成 fixture + FTS/LIKE 安全回退	无授权采集	apps/desktop/src-tauri/src/commands.rs
+D006	2026-11-21T13:55:00Z	未添加整库 MIT LICENSE	用户未选许可证	/workspace/README.md
+D007	2026-11-21T14:00:00Z	Linux 资产 SHA256 ce9cdfd3… 已核对	GitHub Release API	vendor/zeroclaw.lock.json
+D008	2026-11-21T14:45:00Z	supersedes D008-old：裸 socket 握手≠产品客户端；产品解析 snake_case 已修	分离证据级别	apps/desktop/src-tauri/src/assistant/zeroclaw_rpc.rs
+D009	2026-11-21T14:50:00Z	宿主 capability token（capv1 签名）+ MCP stdio 二进制	Grok B3	apps/desktop/src-tauri/src/scope.rs
+D010	2026-11-21T14:55:00Z	sidecar 写入 zeroclaw config.toml 启动 ludao-legal-mcp（stdio）	真 MCP 非仅 Rust 函数	apps/desktop/src-tauri/src/assistant/sidecar.rs
+D011	2026-11-21T16:10:00Z	supersedes D009：capability 改为宿主确认后的高熵票据；空表、撤销、过期、错会话、另一案件均拒绝。模型工具链没有 grant	第二轮复验：公开常量 HMAC 可重算且撤销无效	apps/desktop/src-tauri/src/scope.rs
+D012	2026-11-21T16:12:00Z	supersedes D010：mcp_attached 只在 daemon 日志出现 ludao-legal 工具注册后为真；session 参数用 agent_alias/session_id；取消 RPC 失败不得报成功	第二轮复验：文件存在或 initialize 不等于工具已接通	apps/desktop/src-tauri/src/assistant/supervisor.rs
+D013	2026-11-21T16:14:00Z	生产法律 MCP 只读打开已有快照。不播种、不迁移、不启用 DEV_TRUST。缺库失败且不创建文件。开发播种只在显式 open_and_init	第二轮复验：MCP 曾无条件 DEV_TRUST 并写出 225280 字节库	apps/desktop/src-tauri/src/bin/ludao-legal-mcp.rs
+D014	2026-11-21T16:16:00Z	受管 runtime 核对解压后 zeroclaw 二进制 sha256。LUDAO_ZEROCLAW_BIN 不能把任意路径当白名单。Windows 解压二进制未核	第二轮复验：/bin/true 曾被接受	vendor/zeroclaw.lock.json
+D015	2026-11-21T16:18:00Z	云端 fetch 已从桌面助手删除。离线台账保留。非 Tauri 只标合成演示，scope 与助手不可用	第二轮复验：runToday 不看授权仍可出网；浏览器点击未捕获	apps/desktop/src/lib/cloudAgent.ts

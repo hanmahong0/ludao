@@ -1,0 +1,90 @@
+{
+  "_doc": "案由要件结构 DSL（server-config）。三处复用：录入校验 / 文书数据注入 / 缺口诊断。",
+  "_design": "确定的形式要件门槛走本文件的 gapRule（CEL，可审计/可解释）；高度裁量的实体判断走 ts-cloud LLM（专家复核）。",
+  "_compliance_gate": "★ 要件结构为种子内容，上线前须由资深律师对照裁判规则精修（切片3 缺口诊断质量门禁）；精修前缺口结论对用户标『参考』。",
+  "kind": "claim-elements",
+  "config_id": "private_lending",
+  "caseType": "private_lending",
+  "caseTypeLabel": "民间借贷纠纷",
+  "schemaVersion": 2,
+  "version": "2026.06.1",
+  "effectiveFrom": "2026-06-01",
+  "templateRefs": ["evidence_list_v5", "cross_exam_table_v2", "complaint_private_lending_v3"],
+
+  "elements": [
+    {
+      "id": "loan_relationship",
+      "name": "借贷合意",
+      "provesFact": "双方存在借贷合意",
+      "requiredEvidence": ["借条/借款合同", "微信/短信/通话中的借款确认", "证人证言"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺借贷合意的直接证据（借条/借款合同或对话确认）。",
+      "suggest": "补充借条、借款合同，或能体现借款合意的微信/短信记录（注意电子证据需固定原始载体）。"
+    },
+    {
+      "id": "actual_delivery",
+      "name": "款项实际交付",
+      "provesFact": "出借人已实际向借款人交付款项",
+      "requiredEvidence": ["银行转账记录", "微信/支付宝转账记录", "取现凭证", "现金交付的收据或证人证言"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "主张民间借贷，但缺『款项实际交付』凭证——仅有借条不足以证明借款已实际交付（大额现金尤需印证）。",
+      "suggest": "补充银行流水/转账截图/取现凭证；大额现金交付建议补充交付时的在场证人或资金来源证明。"
+    },
+    {
+      "id": "interest_agreement",
+      "name": "利息约定",
+      "provesFact": "双方就利息及标准有约定",
+      "requiredEvidence": ["书面利息约定", "聊天记录中的利率确认"],
+      "satisfyRule": "any",
+      "severity": "info",
+      "appliesWhen": "claim.includes_interest == true",
+      "gapPrompt": "主张利息但未见利息约定证据；无约定或约定不明的，本金外利息可能不予支持。",
+      "suggest": "补充利率书面/聊天约定；注意约定利率不得超过法律保护上限。"
+    },
+    {
+      "id": "repayment_due",
+      "name": "还款期限届满 / 已主张还款",
+      "provesFact": "还款条件已成就（约定到期或已催告）",
+      "requiredEvidence": ["还款期限约定", "催款通知/催收记录"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "未见还款期限届满或催告还款的证据；未约定期限的需证明已催告并给予合理期限。",
+      "suggest": "补充借款约定的还款日期，或催款的微信/短信/律师函等记录。"
+    }
+  ],
+
+  "gapRules": [
+    {
+      "id": "gap_missing_delivery",
+      "severity": "critical",
+      "when": "has('loan_relationship') && !has('actual_delivery')",
+      "explain": "已有借贷合意但缺款项实际交付凭证；根据『谁主张谁举证』，出借人须证明款项已实际交付，否则借款关系可能不被认定。",
+      "elementRef": "actual_delivery"
+    },
+    {
+      "id": "gap_cash_large_amount",
+      "severity": "warning",
+      "when": "evidenceForm('actual_delivery') == 'cash' && claim.amount >= 50000",
+      "explain": "大额现金交付仅有借条/收据，证明力较弱，法院常要求结合出借人资金实力、交付凭证等综合认定。",
+      "elementRef": "actual_delivery"
+    },
+    {
+      "id": "gap_interest_no_agreement",
+      "severity": "info",
+      "when": "claim.includes_interest == true && !has('interest_agreement')",
+      "explain": "主张利息但缺利息约定；借贷双方对支付利息没有约定的，出借人主张利息的，法院一般不予支持。",
+      "elementRef": "interest_agreement"
+    }
+  ],
+
+  "_cel_notes": {
+    "host_functions": [
+      "has(elementId) -> bool：该要件是否已被任一已编目证据满足",
+      "evidenceForm(elementId) -> string：满足该要件的证据形式（book/electronic/cash/...）",
+      "claim.* / evidence.* ：由本地引擎注入的脱敏结构化上下文（不含原文）"
+    ],
+    "rationale": "门控 critical 要件的 when 一律走 CEL + golden 测试（v5 D5）；JSON Logic 不用于此处，因其无类型检查会静默给错结论。"
+  }
+}

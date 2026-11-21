@@ -1,0 +1,26 @@
+{
+  "kind": "template",
+  "config_id": "civil_power_of_attorney",
+  "schemaVersion": 1,
+  "version": "2026.06.1",
+  "effectiveFrom": "2026-06-01",
+  "docType": "civil_power_of_attorney",
+  "title": "授权委托书（合成模板）",
+  "_compliance_gate": "合成占位模板，签发前须核对当事人身份与权限范围。",
+  "sections": [
+    {
+      "heading": "委托人",
+      "body": "本人 {{principal_name}}，现委托 {{agent_name}} 律师代为办理 {{matter_title}} 相关诉讼事务。"
+    },
+    {
+      "heading": "代理权限",
+      "body": "代理权限为：{{scope}}"
+    }
+  ],
+  "placeholders": [
+    { "key": "principal_name", "label": "委托人", "source": "manual" },
+    { "key": "agent_name", "label": "受托律师", "source": "manual" },
+    { "key": "matter_title", "label": "案件简称", "source": "case.title" },
+    { "key": "scope", "label": "权限范围", "source": "manual" }
+  ]
+}

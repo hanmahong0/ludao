@@ -1,0 +1,81 @@
+{
+  "_doc": "案由要件结构 DSL（server-config）。金融借款合同纠纷（金融机构借款，区别于民间借贷）。",
+  "_compliance_gate": "要件为种子内容，须由资深律师/法务对照现行有效法律与裁判口径逐项精修核定后方可作准。",
+  "kind": "claim-elements",
+  "config_id": "financial_loan",
+  "caseType": "financial_loan",
+  "caseTypeLabel": "金融借款合同纠纷",
+  "schemaVersion": 2,
+  "version": "2026.06.1",
+  "effectiveFrom": "2026-06-01",
+  "templateRefs": ["evidence_list_v5", "cross_exam_table_v2"],
+
+  "elements": [
+    {
+      "id": "loan_contract",
+      "name": "借款合同关系成立",
+      "provesFact": "金融机构与借款人之间的借款合同关系",
+      "requiredEvidence": ["借款合同/授信协议", "借据/借款凭证", "电子合同与签署记录"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺借款合同关系成立的证据（借款合同/授信协议或借据）。",
+      "suggest": "补充借款合同、授信协议或借据；电子合同补签署与认证记录。"
+    },
+    {
+      "id": "disbursement",
+      "name": "款项发放",
+      "provesFact": "金融机构已按约发放贷款",
+      "requiredEvidence": ["放款凭证", "银行流水/入账记录", "受托支付凭证"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺款项发放凭证；放款事实未证明将直接影响本金请求。",
+      "suggest": "补充放款凭证、入账银行流水或受托支付记录。"
+    },
+    {
+      "id": "repayment_default",
+      "name": "还款与违约情况",
+      "provesFact": "借款人还款、逾期与违约的事实及金额",
+      "requiredEvidence": ["还款记录", "逾期/欠款明细", "催收/宣布提前到期通知"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "缺还款/逾期明细，欠付本息与违约金额可能难以认定。",
+      "suggest": "补充还款台账、逾期明细及催收或宣布提前到期的通知。"
+    },
+    {
+      "id": "guarantee",
+      "name": "担保情况",
+      "provesFact": "保证、抵押或质押等担保的设立与效力",
+      "requiredEvidence": ["保证合同", "抵押登记/他项权证", "质押与公示凭证"],
+      "satisfyRule": "any",
+      "severity": "info",
+      "gapPrompt": "涉担保但缺担保设立/登记证据；担保责任主张可能不被支持。",
+      "suggest": "补充保证合同、抵押登记或质押公示等担保设立与生效证据。"
+    }
+  ],
+
+  "gapRules": [
+    {
+      "id": "gap_no_loan_contract",
+      "severity": "critical",
+      "when": "!has('loan_contract')",
+      "explain": "借款合同关系是请求的基础；缺合同/借据将直接影响全部请求。",
+      "elementRef": "loan_contract"
+    },
+    {
+      "id": "gap_no_disbursement",
+      "severity": "critical",
+      "when": "!has('disbursement')",
+      "explain": "放款事实是本金请求的前提；缺放款凭证将直接影响本金支持。",
+      "elementRef": "disbursement"
+    },
+    {
+      "id": "gap_repayment_unconfirmed",
+      "severity": "warning",
+      "when": "!has('repayment_default')",
+      "explain": "缺还款/逾期明细，欠付本息与违约金额难以认定，建议补强。",
+      "elementRef": "repayment_default"
+    }
+  ],
+
+  "_cel_notes": "host_functions 同 private-lending.json；gapRules 仅用 has()，不依赖案由特定 claim.* 字段。"
+}

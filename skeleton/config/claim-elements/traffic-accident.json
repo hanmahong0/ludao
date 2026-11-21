@@ -1,0 +1,81 @@
+{
+  "_doc": "案由要件结构 DSL（server-config）。机动车交通事故责任纠纷。与 private-lending.json 同结构。",
+  "kind": "claim-elements",
+  "config_id": "traffic_accident",
+  "caseType": "traffic_accident",
+  "caseTypeLabel": "机动车交通事故责任纠纷",
+  "schemaVersion": 2,
+  "version": "2026.06.1",
+  "effectiveFrom": "2026-06-01",
+  "templateRefs": ["evidence_list_v5", "cross_exam_table_v2", "complaint_traffic_accident_v2"],
+
+  "elements": [
+    {
+      "id": "liability_determination",
+      "name": "事故事实与责任划分",
+      "provesFact": "事故发生及各方责任比例",
+      "requiredEvidence": ["道路交通事故认定书", "事故现场照片/视频", "报警/出警记录"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺『道路交通事故认定书』——这是责任划分的核心证据，缺失将极大影响赔偿主张。",
+      "suggest": "向交管部门调取交通事故认定书；无认定书的需补充现场证据并申请责任认定或由法院综合认定。"
+    },
+    {
+      "id": "subject_and_insurance",
+      "name": "赔偿主体与保险",
+      "provesFact": "侵权车辆、驾驶人、投保情况（交强险/商业三者险）",
+      "requiredEvidence": ["行驶证/登记信息", "驾驶证", "交强险/商业险保单"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "缺车辆/保险信息，可能漏列保险公司为被告或影响交强险/商业险的赔付主张。",
+      "suggest": "调取车辆登记信息与保单，确定交强险/商业三者险承保公司并列为被告。"
+    },
+    {
+      "id": "causation_injury",
+      "name": "因果关系与损害后果",
+      "provesFact": "事故造成的人身/财产损害及因果关系",
+      "requiredEvidence": ["病历/诊断证明", "出院记录", "车辆定损单"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺损害后果与因果关系证据（病历/诊断/定损）。",
+      "suggest": "补充就诊病历、诊断证明、出院记录及车辆定损单。"
+    },
+    {
+      "id": "damages_calculation",
+      "name": "各项损失计算",
+      "provesFact": "医疗费、误工费、护理费、伤残赔偿金等各项损失",
+      "requiredEvidence": ["医疗费票据", "收入证明/误工证明", "伤残等级鉴定意见", "护理/交通/营养费凭证"],
+      "satisfyRule": "n",
+      "satisfyN": 1,
+      "severity": "warning",
+      "gapPrompt": "主张的损失项缺对应凭证；各项损失需逐项举证，缺项可能不被支持。",
+      "suggest": "逐项补齐：医疗费票据、误工的收入与请假证明、伤残赔偿需先做伤残等级鉴定。"
+    }
+  ],
+
+  "gapRules": [
+    {
+      "id": "gap_no_liability_doc",
+      "severity": "critical",
+      "when": "!has('liability_determination')",
+      "explain": "缺交通事故认定书，责任比例难以确定，直接影响全部赔偿请求。",
+      "elementRef": "liability_determination"
+    },
+    {
+      "id": "gap_disability_no_appraisal",
+      "severity": "critical",
+      "when": "claim.includes_disability == true && !evidenceHas('伤残等级鉴定意见')",
+      "explain": "主张伤残赔偿金但缺伤残等级鉴定意见；伤残赔偿须以鉴定结论为据。",
+      "elementRef": "damages_calculation"
+    },
+    {
+      "id": "gap_lost_income_no_proof",
+      "severity": "warning",
+      "when": "claim.includes_lost_income == true && !evidenceHas('收入证明')",
+      "explain": "主张误工费但缺收入证明/误工证明，金额可能按行业标准酌定或不予支持。",
+      "elementRef": "damages_calculation"
+    }
+  ],
+
+  "_cel_notes": "host_functions 增加 evidenceHas(name)->bool；门控 critical 要件走 CEL+golden 测试。"
+}

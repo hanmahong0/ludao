@@ -1,0 +1,81 @@
+{
+  "_doc": "案由要件结构 DSL（server-config）。劳动争议。注：劳动争议多为仲裁前置，起诉前一般须经劳动仲裁——属程序事项，不在本要件层。",
+  "_compliance_gate": "要件为种子内容，须由资深律师/法务对照现行有效法律与裁判口径逐项精修核定后方可作准。",
+  "kind": "claim-elements",
+  "config_id": "labor_dispute",
+  "caseType": "labor_dispute",
+  "caseTypeLabel": "劳动争议",
+  "schemaVersion": 2,
+  "version": "2026.06.1",
+  "effectiveFrom": "2026-06-01",
+  "templateRefs": ["evidence_list_v5", "cross_exam_table_v2"],
+
+  "elements": [
+    {
+      "id": "labor_relationship",
+      "name": "劳动关系存在",
+      "provesFact": "劳动者与用人单位之间存在劳动关系",
+      "requiredEvidence": ["劳动合同", "工资支付记录", "考勤/社保/工牌/工作证等用工凭证"],
+      "satisfyRule": "any",
+      "severity": "critical",
+      "gapPrompt": "缺劳动关系存在的证据（劳动合同或事实劳动关系凭证）。",
+      "suggest": "补充劳动合同；无书面合同的，补工资流水、考勤、社保、工作证等事实用工证据。"
+    },
+    {
+      "id": "wage_payment",
+      "name": "工资支付/欠付情况",
+      "provesFact": "工资标准与欠付/拖欠的事实",
+      "requiredEvidence": ["工资条/工资表", "银行代发流水", "欠薪确认/沟通记录"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "缺工资标准与欠付的确认证据，欠付金额可能难以认定。",
+      "suggest": "补充工资条、银行代发流水或单位欠薪确认。"
+    },
+    {
+      "id": "termination_fact",
+      "name": "解除/终止的事实与依据",
+      "provesFact": "劳动合同解除或终止的时间、方式与原因",
+      "requiredEvidence": ["解除/终止通知", "离职证明", "协商或处分文件"],
+      "satisfyRule": "any",
+      "severity": "warning",
+      "gapPrompt": "涉解除/终止但缺其事实与依据证据，合法性与补偿基础难以认定。",
+      "suggest": "补充解除/终止通知、离职证明或相关协商/处分文件。"
+    },
+    {
+      "id": "compensation_basis",
+      "name": "经济补偿/赔偿基础",
+      "provesFact": "计算经济补偿或赔偿所需的工作年限与工资标准",
+      "requiredEvidence": ["入离职时间证明", "前12个月工资标准", "违法解除的证据"],
+      "satisfyRule": "any",
+      "severity": "info",
+      "gapPrompt": "缺工作年限/工资标准/违法解除证据，补偿或赔偿数额难以主张。",
+      "suggest": "补充入离职时间、前12个月平均工资及（如主张赔偿金）违法解除的证据。"
+    }
+  ],
+
+  "gapRules": [
+    {
+      "id": "gap_no_labor_relationship",
+      "severity": "critical",
+      "when": "!has('labor_relationship')",
+      "explain": "劳动关系是全部劳动请求的基础；缺关系证据将直接影响请求的支持。",
+      "elementRef": "labor_relationship"
+    },
+    {
+      "id": "gap_wage_unconfirmed",
+      "severity": "warning",
+      "when": "!has('wage_payment')",
+      "explain": "缺工资标准/欠付证据，欠薪金额难以认定，建议补强。",
+      "elementRef": "wage_payment"
+    },
+    {
+      "id": "gap_no_termination_fact",
+      "severity": "warning",
+      "when": "!has('termination_fact')",
+      "explain": "涉解除/终止争议缺事实与依据，合法性与补偿主张较为被动。",
+      "elementRef": "termination_fact"
+    }
+  ],
+
+  "_cel_notes": "host_functions 同 private-lending.json；gapRules 仅用 has()，不依赖案由特定 claim.* 字段。"
+}

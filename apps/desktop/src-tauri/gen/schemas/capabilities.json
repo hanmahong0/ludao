@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"默认能力集：主窗口 core 权限。自定义命令(case_list 等)无需额外 permission。","local":true,"windows":["main"],"permissions":["core:default"]}}
