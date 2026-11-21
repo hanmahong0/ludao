@@ -29,7 +29,15 @@ export default function App() {
   const [capability, setCapability] = useState<CapabilityGrant | null>(null);
 
   useEffect(() => {
-    void ipc.scopeGrantForMatter(activeCaseId).then(setCapability).catch(() => setCapability(null));
+    if (!BACKEND_IS_REAL) {
+      setCapability(null);
+      return;
+    }
+    void ipc
+      .scopeConfirmSelection(activeCaseId)
+      .then(() => ipc.scopeGrantForMatter(activeCaseId))
+      .then(setCapability)
+      .catch(() => setCapability(null));
   }, [activeCaseId]);
 
   const openEvidence = (caseId: string) => {
@@ -39,6 +47,11 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col md:flex-row text-slate-800">
+      {!BACKEND_IS_REAL && (
+        <div className="bg-amber-50 px-4 py-2 text-sm text-amber-900">
+          合成演示模式：案件列表是本地样例。scope、私卷检索和助手不可用，不会向未连接的后端抛出未捕获错误。
+        </div>
+      )}
       {/* 侧边导航（桌面）/ 顶栏（移动） */}
       <aside className="flex shrink-0 flex-row items-center gap-1 border-b border-slate-200 bg-white px-3 py-2 md:w-60 md:flex-col md:items-stretch md:gap-2 md:border-b-0 md:border-r md:px-3 md:py-5">
         <div className="mr-3 flex items-center gap-2 md:mb-4 md:mr-0 md:px-2">
@@ -105,6 +118,7 @@ export default function App() {
           <AgentPanel
             activeCaseId={activeCaseId}
             capabilityToken={capability?.token ?? ""}
+            sessionId={capability?.sessionId ?? ""}
             onSelectCase={setActiveCaseId}
           />
         ) : (

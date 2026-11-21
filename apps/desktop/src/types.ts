@@ -331,6 +331,7 @@ export interface AssistantRuntimeStatus {
 export interface CapabilityGrant {
   token: string;
   matterId: string;
+  sessionId: string;
   expiresAt: string;
 }
 
@@ -354,6 +355,8 @@ export interface AssistantDraftResult {
     | "disabled"
     | "rules_summary_only"
     | "product_handshake_verified"
+    | "product_mcp_enumerated"
+    | "simulation_turn"
     | "product_tool_turn_verified";
 }
 

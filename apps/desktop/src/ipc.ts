@@ -114,26 +114,50 @@ export const ipc = {
     call<string>("compare_public_cases", { caseVersionA, caseVersionB }),
 
   assistantStatus: (): Promise<AssistantRuntimeStatus> =>
-    call<AssistantRuntimeStatus>("assistant_status"),
+    BACKEND_IS_REAL
+      ? call<AssistantRuntimeStatus>("assistant_status")
+      : Promise.resolve({
+          enabled: false,
+          configured: false,
+          runtimeKind: "disabled",
+          pinnedVersion: "",
+          binaryPresent: false,
+          handshakeOk: false,
+          modelConfigured: false,
+          mcpAttached: false,
+          lastError: "合成演示模式：助手不可用",
+          disclosure: "浏览器预览没有 ZeroClaw，也没有案件授权。",
+        }),
 
   assistantSetEnabled: (enabled: boolean): Promise<AssistantRuntimeStatus> =>
-    call<AssistantRuntimeStatus>("assistant_set_enabled", { enabled }),
+    BACKEND_IS_REAL
+      ? call<AssistantRuntimeStatus>("assistant_set_enabled", { enabled })
+      : Promise.reject(new Error("合成演示模式：助手不可用")),
+
+  scopeConfirmSelection: (matterId: string): Promise<void> =>
+    BACKEND_IS_REAL
+      ? call<void>("scope_confirm_selection", { matterId })
+      : Promise.reject(new Error("合成演示模式：scope 不可用")),
 
   scopeGrantForMatter: (matterId: string): Promise<CapabilityGrant> =>
-    call<CapabilityGrant>("scope_grant_for_matter", { matterId }),
+    BACKEND_IS_REAL
+      ? call<CapabilityGrant>("scope_grant_for_matter", { matterId })
+      : Promise.reject(new Error("合成演示模式：scope 不可用")),
 
   searchPrivateDocuments: (
     capabilityToken: string,
+    sessionId: string,
     matterId: string,
     query: string,
     limit = 10,
   ): Promise<unknown[]> =>
-    call("search_private_documents", { capabilityToken, matterId, query, limit }),
+    call("search_private_documents", { capabilityToken, sessionId, matterId, query, limit }),
 
   assistantRunDraft: (input: {
     caseId: string;
     intent: string;
     capabilityToken: string;
+    sessionId: string;
   }): Promise<AssistantDraftResult> => call<AssistantDraftResult>("assistant_run_draft", { input }),
 
   assistantCancel: (taskId: string): Promise<void> => call<void>("assistant_cancel", { taskId }),

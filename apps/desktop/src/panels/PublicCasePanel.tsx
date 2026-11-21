@@ -77,7 +77,9 @@ export function PublicCasePanel() {
             <h3 className="font-medium">{h.title}</h3>
             <div className="mt-1 text-xs text-slate-500">
               {h.caseVersion} · {h.licenseStatus}
-              {h.locator ? ` · ${h.locator}` : ""}
+              {h.locator
+                ? ` · ${h.locator.startsWith("evidence_seq:") ? `证据序号 ${h.locator.slice("evidence_seq:".length)}` : h.locator.startsWith("passage:") ? `段落 ${h.locator.slice("passage:".length)}` : h.locator}`
+                : ""}
             </div>
             <p className="mt-2 text-slate-700">{h.excerpt}</p>
             {h.similarityNote && (

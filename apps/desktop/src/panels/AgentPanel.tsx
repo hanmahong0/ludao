@@ -1,18 +1,11 @@
 import { useEffect, useState } from "react";
-import { ipc } from "../ipc";
-import { CLOUD_EXPORT_ENABLED, runCloudAgent, runCloudToday } from "../lib/cloudAgent";
+import { BACKEND_IS_REAL, ipc } from "../ipc";
 import type { AgentType, AssistantRuntimeStatus, Case } from "../types";
 import { cn } from "../lib/ui";
 
 type Preset = { label: string; agentType: AgentType; intent: string };
 
 const TODAY_LABEL = "今日全局精力简报";
-const TODAY_INTENT =
-  "基于跨案脱敏摘要，按到期紧迫度 × 重要性 × 缺口严重度，给出今日全局最该处理的 1–3 件事；" +
-  "逐条用 caseRef 序号点名是哪个案件的哪件事并说明理由，简洁可执行。锚点未确认的期限请提示先确认触发日。";
-
-type RefTitle = { caseRef: string; title: string };
-
 const PRESETS: Preset[] = [
   {
     label: "今日最该处理",
@@ -35,10 +28,12 @@ const PRESETS: Preset[] = [
 export function AgentPanel({
   activeCaseId,
   capabilityToken,
+  sessionId,
   onSelectCase,
 }: {
   activeCaseId: string;
   capabilityToken: string;
+  sessionId: string;
   onSelectCase: (id: string) => void;
 }) {
   const [cases, setCases] = useState<Case[]>([]);
@@ -46,10 +41,8 @@ export function AgentPanel({
   const [activePreset, setActivePreset] = useState<string | null>(null);
   const [output, setOutput] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [legend, setLegend] = useState<RefTitle[]>([]);
   const [runtime, setRuntime] = useState<AssistantRuntimeStatus | null>(null);
   const [localMode, setLocalMode] = useState(true);
-  const [cloudOptIn, setCloudOptIn] = useState(false);
 
   useEffect(() => {
     void ipc.caseList().then(setCases);
@@ -57,12 +50,24 @@ export function AgentPanel({
   }, []);
 
   const toggleAssistant = async () => {
-    const next = !(runtime?.enabled ?? false);
-    const st = await ipc.assistantSetEnabled(next);
-    setRuntime(st);
+    if (!BACKEND_IS_REAL) {
+      setError("合成演示模式：助手不可用。请使用 Tauri 桌面。");
+      return;
+    }
+    try {
+      const next = !(runtime?.enabled ?? false);
+      const st = await ipc.assistantSetEnabled(next);
+      setRuntime(st);
+    } catch (e) {
+      setError(String(e));
+    }
   };
 
   const runLocalDraft = async (intent: string) => {
+    if (!BACKEND_IS_REAL) {
+      setError("合成演示模式：助手与 scope 不可用。请使用 Tauri 桌面。");
+      return;
+    }
     if (running) return;
     setRunning(true);
     setError(null);
@@ -76,6 +81,7 @@ export function AgentPanel({
         caseId: activeCaseId,
         intent,
         capabilityToken,
+        sessionId,
       });
       if (res.error) setError(res.error);
       else setOutput(`${res.text}\n\n[runtime: ${res.runtimeEvidence}]`);
@@ -87,60 +93,13 @@ export function AgentPanel({
   };
 
   const run = async (preset: Preset) => {
-    if (!cloudOptIn || !CLOUD_EXPORT_ENABLED) {
-      setError("云端通道默认关闭；需构建启用 VITE_CLOUD_EXPORT_ENABLED=1 且勾选明确授权。");
-      return;
-    }
-    if (running) return;
-    setRunning(true);
     setActivePreset(preset.label);
-    setError(null);
-    setOutput("");
-    setLegend([]);
-    try {
-      // 本地 rust-core 产出脱敏上下文（原件/原文不出网）。
-      const ctx = await ipc.agentContext(activeCaseId);
-      const res = await runCloudAgent({
-        ctx,
-        agentType: preset.agentType,
-        intent: preset.intent,
-      });
-      if (res.error) setError(res.error);
-      else setOutput(res.text ?? "");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setRunning(false);
-    }
+    setError("云端外发已移除。请勾选本地助手；离线台账不依赖云。");
   };
 
-  // 跨案：本地产出脱敏摘要（仅 cases 出网）；legend 仅本地把 caseRef 还原为真实案件。
   const runToday = async () => {
-    if (running) return;
-    setRunning(true);
     setActivePreset(TODAY_LABEL);
-    setError(null);
-    setOutput("");
-    setLegend([]);
-    try {
-      const digest = await ipc.triageContext();
-      const res = await runCloudToday({ cases: digest.cases, intent: TODAY_INTENT });
-      if (res.error) {
-        setError(res.error);
-      } else {
-        setOutput(res.text ?? "");
-        setLegend(
-          digest.legend.map((l) => ({
-            caseRef: l.caseRef,
-            title: cases.find((c) => c.id === l.caseId)?.title ?? l.caseId,
-          })),
-        );
-      }
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setRunning(false);
-    }
+    setError("云端外发已移除。今日简报不再出网；请使用本地期限与缺口面板。");
   };
 
   return (
@@ -148,7 +107,7 @@ export function AgentPanel({
       <header className="mb-5">
         <h1 className="text-lg font-semibold md:text-xl">AI 助手</h1>
         <p className="text-sm text-slate-500">
-          本地 ZeroClaw sidecar（默认关闭）· 宿主只读法律工具桥 · 云端通道可选
+          本地 ZeroClaw sidecar（默认关闭）· 宿主只读法律工具 · 云端外发已移除
         </p>
         {runtime && (
           <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
@@ -173,14 +132,9 @@ export function AgentPanel({
                 />
                 优先本地宿主工具/ZeroClaw
               </label>
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={cloudOptIn}
-                  onChange={(e) => setCloudOptIn(e.target.checked)}
-                  disabled={!CLOUD_EXPORT_ENABLED}
-                />
-                明确授权云端（默认关）
+              <label className="flex items-center gap-1 text-slate-400">
+                <input type="checkbox" checked={false} disabled readOnly />
+                云端外发已移除
               </label>
             </div>
             <p className="mt-2 text-slate-500">{runtime.disclosure}</p>
@@ -197,7 +151,7 @@ export function AgentPanel({
           <div>
             <div className="text-sm font-semibold text-slate-800">跨全部案件</div>
             <div className="text-[12px] text-slate-500">
-              本地跨案分诊（期限 × 重要性 × 缺口）→ 仅脱敏摘要出网
+              本地跨案分诊仍在期限与缺口面板。此按钮不再出网。
             </div>
           </div>
           <button
@@ -264,28 +218,8 @@ export function AgentPanel({
         )}
       </div>
 
-      {legend.length > 0 && (
-        <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2">
-          <div className="mb-1 text-[11px] font-medium text-slate-500">
-            案件对照（caseRef → 案件，仅本机，未出网）
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {legend.map((l) => (
-              <span
-                key={l.caseRef}
-                className="rounded bg-white px-2 py-0.5 text-[12px] text-slate-600 ring-1 ring-slate-200"
-              >
-                <span className="font-mono text-indigo-600">{l.caseRef}</span> ·{" "}
-                {l.title}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
       <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
-        出网内容仅为脱敏结构（案由 / 标的档位 / 证据形式 / 缺口），由本地引擎组装、云端
-        DeepSeek 推理；建议仅供参考，期限与形式要件判断以本地确定性结果为准。
+        没有模型密钥时，本地助手只给出规则摘要，并标明 runtime 证据。期限与形式要件以本地确定性结果为准。
       </p>
     </div>
   );
