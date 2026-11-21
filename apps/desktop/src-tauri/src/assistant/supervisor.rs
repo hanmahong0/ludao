@@ -1,6 +1,6 @@
 //! AgentSupervisor：子进程、RPC 会话、任务状态（默认关闭）。
 
-use super::sidecar::{spawn_daemon, LudaoMcpEnv, SidecarHandle};
+use super::sidecar::{mcp_registered, spawn_daemon, LudaoMcpEnv, SidecarHandle};
 use super::zeroclaw_rpc::{self, RpcClient, PINNED_COMMIT, PINNED_TAG};
 use crate::commands;
 use crate::dto::{
@@ -47,47 +47,54 @@ impl AssistantSupervisor {
     }
 
     #[cfg(unix)]
-    fn mcp_fingerprint(cap: &str, matter: &str) -> Result<String, String> {
-        let db = std::env::var("LUDAO_DB_PATH").map_err(|_| "LUDAO_DB_PATH 未设置".to_string())?;
-        Ok(format!("{db}|{matter}|{}", &cap[..cap.len().min(24)]))
-    }
-
-    #[cfg(unix)]
     fn ensure_product_mcp(
         inner: &mut SupervisorInner,
-        cap: &str,
+        scope: &ScopeRegistry,
+        token: &str,
+        session_id: &str,
         matter: &str,
     ) -> Result<(), String> {
-        let fp = Self::mcp_fingerprint(cap, matter)?;
+        let db_path = std::env::var("LUDAO_DB_PATH").map_err(|_| "LUDAO_DB_PATH 未设置".to_string())?;
+        let fp = format!("{db_path}|{matter}|{session_id}|{}", scope.generation());
         if inner.mcp_attached && inner.last_mcp_fingerprint.as_deref() == Some(&fp) {
             return Ok(());
         }
-        let db_path = std::env::var("LUDAO_DB_PATH").map_err(|_| "LUDAO_DB_PATH 未设置".to_string())?;
-        let mcp = LudaoMcpEnv {
-            db_path: PathBuf::from(db_path),
-            capability_token: cap.to_string(),
-            matter_scope: matter.to_string(),
-        };
-        let (data_dir, socket) = if let Some(a) = inner.active.as_ref() {
-            (a.sidecar.data_dir.clone(), a.sidecar.socket_path.clone())
-        } else {
-            let data_dir = std::env::temp_dir().join(format!("ludao-zc-{}", Uuid::new_v4()));
-            let socket = data_dir.join("daemon.sock");
-            (data_dir, socket)
-        };
+        let data_dir = std::env::temp_dir().join(format!("ludao-zc-{}", Uuid::new_v4()));
+        let socket = data_dir.join("daemon.sock");
+        let grant_file = data_dir.join("grant.json");
+        scope.write_grant_file(token, &grant_file)?;
         if let Some(mut a) = inner.active.take() {
             a.sidecar.stop();
         }
+        let mcp = LudaoMcpEnv {
+            db_path: PathBuf::from(&db_path),
+            grant_file,
+            host_session: session_id.to_string(),
+            db_key: crate::db::snapshot_db_key(),
+        };
         let sidecar = spawn_daemon(&data_dir, &socket, Some(&mcp))?;
-        let mut client = zeroclaw_rpc::RpcClient::connect(&socket, Duration::from_secs(12))?;
+        let mut client = zeroclaw_rpc::RpcClient::connect(&socket, Duration::from_secs(15))?;
         client.initialize()?;
+        let zc_session = client.session_new("legal")?;
+        let log = sidecar.log_text();
+        let attached = mcp_registered(&log);
         inner.socket_path = Some(socket);
         inner.handshake_ok = true;
         inner.enabled = true;
         inner.product_session_ready = true;
-        inner.mcp_attached = super::sidecar::resolve_legal_mcp_binary().is_ok();
+        inner.mcp_attached = attached;
+        inner.model_configured = std::env::var("LUDAO_SIM_LLM_URL")
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
         inner.last_mcp_fingerprint = Some(fp);
+        inner.active_session_id = Some(zc_session);
+        if !attached {
+            inner.last_error = Some("MCP 已配置但 daemon 日志没有工具注册记录".into());
+        }
         inner.active = Some(ActiveUnixRpc { sidecar, client });
+        if !attached {
+            return Err("mcp_not_enumerated".into());
+        }
         Ok(())
     }
 
@@ -109,7 +116,7 @@ impl AssistantSupervisor {
             last_error: inner.last_error.clone(),
             handshake_ok: inner.handshake_ok,
             model_configured: inner.model_configured,
-            disclosure: "Windows 无 OS 级沙箱。助手默认关闭；scope 由宿主 capability 签发。未配置本地模型时不发起 LLM turn。".into(),
+            disclosure: "Windows 无 OS 级沙箱。助手默认关闭。scope 只来自宿主确认，不来自模型自报案件。未设置 LUDAO_SIM_LLM_URL 时不发起模型 turn；该地址只用于标明的 simulation，不是法律模型。".into(),
             mcp_attached: inner.mcp_attached,
         }
     }
@@ -188,13 +195,14 @@ impl AssistantSupervisor {
         evidence: &str,
     ) -> Result<AssistantDraftResultDto, String> {
         scope
-            .validate(&input.capability_token, &input.case_id)
+            .validate(&input.capability_token, &input.case_id, &input.session_id)
             .map_err(|e| e.to_string())?;
         let ctx = commands::agent_context(conn, &input.case_id)?;
         let private_hits = commands::search_private_documents(
             conn,
             scope,
             &input.capability_token,
+            &input.session_id,
             &input.case_id,
             &input.intent,
             3,
@@ -224,12 +232,11 @@ impl AssistantSupervisor {
             ctx.case_type, ctx.facts_summary
         );
         for (i, c) in citations.iter().enumerate() {
-            text.push_str(&format!(
-                "{}. [{}] {} …\n",
-                i + 1,
-                c.kind,
-                &c.excerpt[..c.excerpt.len().min(80)]
-            ));
+            let excerpt = match c.excerpt.char_indices().nth(80) {
+                Some((idx, _)) => &c.excerpt[..idx],
+                None => c.excerpt.as_str(),
+            };
+            text.push_str(&format!("{}. [{}] {excerpt} …\n", i + 1, c.kind));
         }
         text.push_str("\n（未发生 LLM turn；仅供检索对照。）\n");
         Ok(AssistantDraftResultDto {
@@ -276,14 +283,20 @@ pub fn assistant_run_draft(
     }
 
     scope
-        .validate(&input.capability_token, &input.case_id)
+        .validate(&input.capability_token, &input.case_id, &input.session_id)
         .map_err(|e| e.to_string())?;
 
     #[cfg(unix)]
     {
         let mut inner = sup.inner.lock().map_err(|e| e.to_string())?;
         inner.active_task_id = Some(task_id.clone());
-        if let Err(e) = AssistantSupervisor::ensure_product_mcp(&mut inner, &input.capability_token, &input.case_id) {
+        if let Err(e) = AssistantSupervisor::ensure_product_mcp(
+            &mut inner,
+            scope,
+            &input.capability_token,
+            &input.session_id,
+            &input.case_id,
+        ) {
             drop(inner);
             return Ok(AssistantDraftResultDto {
                 task_id: task_id.clone(),
@@ -309,7 +322,7 @@ pub fn assistant_run_draft(
                     runtime_evidence: "product_handshake_verified".into(),
                 });
             } else {
-                let session_id = match active.client.session_new("default") {
+                let session_id = match active.client.session_new("legal") {
                     Ok(id) => id,
                     Err(e) => {
                         inner.active_session_id = None;
@@ -344,17 +357,33 @@ pub fn assistant_run_draft(
                         "product_handshake_verified",
                     );
                 };
-                if active.client.session_prompt(&session_id, &prompt).is_err() {
+                let sim = std::env::var("LUDAO_SIM_LLM_URL")
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false);
+                if !sim {
+                    let _ = active.client.session_state(&session_id);
                     drop(inner);
                     return AssistantSupervisor::rules_summary_draft(
                         conn,
                         scope,
                         &input,
                         &task_id,
-                        "product_handshake_verified",
+                        "product_mcp_enumerated",
                     );
                 }
-                let turn = active.client.wait_turn(&session_id, Duration::from_secs(8));
+                if active.client.session_prompt(&session_id, &prompt).is_err() {
+                    drop(inner);
+                    return Ok(AssistantDraftResultDto {
+                        task_id: task_id.clone(),
+                        state: "failed".into(),
+                        text: String::new(),
+                        citations: vec![],
+                        coverage_note: None,
+                        error: Some("session/prompt failed".into()),
+                        runtime_evidence: "product_mcp_enumerated".into(),
+                    });
+                }
+                let turn = active.client.wait_turn(&session_id, Duration::from_secs(20));
                 drop(inner);
                 match turn {
                     Ok(t) if t.completed && !t.text_chunks.is_empty() => {
@@ -363,19 +392,23 @@ pub fn assistant_run_draft(
                             state: "succeeded".into(),
                             text: t.text_chunks.join(""),
                             citations: vec![],
-                            coverage_note: Some("product_tool_turn_verified".into()),
+                            coverage_note: Some(
+                                "simulation_turn：本地 HTTP fixture，不是法律模型结论".into(),
+                            ),
                             error: None,
-                            runtime_evidence: "product_tool_turn_verified".into(),
+                            runtime_evidence: "simulation_turn".into(),
                         });
                     }
                     Ok(_) => {
-                        return AssistantSupervisor::rules_summary_draft(
-                            conn,
-                            scope,
-                            &input,
-                            &task_id,
-                            "product_handshake_verified",
-                        );
+                        return Ok(AssistantDraftResultDto {
+                            task_id,
+                            state: "failed".into(),
+                            text: String::new(),
+                            citations: vec![],
+                            coverage_note: None,
+                            error: Some("turn incomplete".into()),
+                            runtime_evidence: "product_mcp_enumerated".into(),
+                        });
                     }
                     Err(e) => {
                         return Ok(AssistantDraftResultDto {
@@ -385,7 +418,7 @@ pub fn assistant_run_draft(
                             citations: vec![],
                             coverage_note: None,
                             error: Some(e),
-                            runtime_evidence: "product_handshake_verified".into(),
+                            runtime_evidence: "product_mcp_enumerated".into(),
                         });
                     }
                 }
@@ -401,13 +434,22 @@ pub fn assistant_cancel(sup: &AssistantSupervisor, task_id: &str) -> Result<(), 
     if inner.active_task_id.as_deref() != Some(task_id) {
         return Err("cancel: unknown task".into());
     }
+    let sid = inner
+        .active_session_id
+        .clone()
+        .ok_or_else(|| "cancel: no session".to_string())?;
     #[cfg(unix)]
     {
-        let sid = inner.active_session_id.clone();
-        if let (Some(active), Some(sid)) = (inner.active.as_mut(), sid) {
-            let _ = active.client.session_cancel(&sid);
-            let _ = active.client.session_state(&sid);
-        }
+        let active = inner
+            .active
+            .as_mut()
+            .ok_or_else(|| "cancel: sidecar not running".to_string())?;
+        active.client.session_cancel(&sid)?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = sid;
+        return Err("cancel: platform has no sidecar".into());
     }
     inner.active_task_id = None;
     Ok(())

@@ -20,7 +20,12 @@ impl std::fmt::Display for QueryReject {
     }
 }
 
-pub fn normalize_private_query(q: &str) -> Result<String, QueryReject> {
+fn is_term_char(c: char) -> bool {
+    c.is_alphanumeric() || c.is_whitespace() || ('\u{4e00}'..='\u{9fff}').contains(&c)
+}
+
+/// 检索词面：先拒绝 `%`/`_`，再丢掉引号和其它标点，使 `"借贷"` 与 `借贷` 同一词面。
+pub fn literal_terms(q: &str) -> Result<String, QueryReject> {
     let t = q.trim();
     if t.is_empty() {
         return Err(QueryReject::Empty);
@@ -31,7 +36,16 @@ pub fn normalize_private_query(q: &str) -> Result<String, QueryReject> {
     if t.contains('%') || t.contains('_') {
         return Err(QueryReject::WildcardForbidden);
     }
-    Ok(t.to_string())
+    let cleaned: String = t.chars().filter(|c| is_term_char(*c)).collect();
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return Err(QueryReject::Empty);
+    }
+    Ok(collapsed)
+}
+
+pub fn normalize_private_query(q: &str) -> Result<String, QueryReject> {
+    literal_terms(q)
 }
 
 pub fn escape_like_pattern(q: &str) -> String {
@@ -50,7 +64,7 @@ pub fn escape_like_pattern(q: &str) -> String {
 
 /// FTS5 查询：仅保留字母数字与中日韩统一表意文字，按空格 AND。
 pub fn fts_and_query(q: &str) -> Result<String, QueryReject> {
-    let t = normalize_private_query(q)?;
+    let t = literal_terms(q)?;
     let mut terms = Vec::new();
     for w in t.split_whitespace() {
         let clean: String = w
@@ -96,6 +110,13 @@ mod tests {
     fn strips_punctuation_for_fts() {
         let q = fts_and_query("\"借条（合成）\"").unwrap();
         assert!(!q.contains('%'));
+        assert!(q.contains("借条"));
+    }
+
+    #[test]
+    fn quoted_chinese_keeps_term() {
+        assert_eq!(literal_terms("\"借贷\"").unwrap(), "借贷");
+        assert_eq!(literal_terms("“借贷”").unwrap(), "借贷");
     }
 
     #[test]

@@ -37,6 +37,20 @@ pub fn open_encrypted(path: &str, key: &str) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
+/// 只读打开已存在的 SQLCipher 库。缺失路径直接失败，不创建文件、不建表、不写 WAL。
+pub fn open_encrypted_readonly(path: &str, key: &str) -> rusqlite::Result<Connection> {
+    if !std::path::Path::new(path).is_file() {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CANTOPEN),
+            Some(format!("snapshot_missing: {path}")),
+        ));
+    }
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    set_key(&conn, key)?;
+    conn.pragma_update(None, "query_only", "ON")?;
+    Ok(conn)
+}
+
 /// 在已打开的连接上设置 SQLCipher 密钥并开启外键。
 /// 抽出来是为了让内存库测试（`Connection::open_in_memory`）复用同样的 key 顺序。
 fn set_key(conn: &Connection, key: &str) -> rusqlite::Result<()> {
@@ -160,5 +174,36 @@ mod tests {
             check_user_version(&conn, 1).is_err(),
             "user_version 99 > supported 1 must be rejected"
         );
+    }
+
+    #[test]
+    fn readonly_missing_does_not_create_and_bytes_stay() {
+        let dir = std::env::temp_dir().join(format!("ludao-ro-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let missing = dir.join("missing.db");
+        assert!(open_encrypted_readonly(missing.to_str().unwrap(), "k").is_err());
+        assert!(!missing.exists(), "缺库不得被只读打开创建");
+        let path = dir.join("ok.db");
+        {
+            let conn = open_encrypted(path.to_str().unwrap(), "k").unwrap();
+            apply_schema(&conn).unwrap();
+            conn.pragma_update(None, "journal_mode", "DELETE").unwrap();
+        }
+        assert!(!dir.join("ok.db-wal").exists(), "写连接关闭后不应留下 WAL");
+        let before = std::fs::read(&path).unwrap();
+        let len = before.len();
+        let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+        {
+            let ro = open_encrypted_readonly(path.to_str().unwrap(), "k").unwrap();
+            let _v: i64 = ro.query_row("SELECT count(*) FROM config_cache", [], |r| r.get(0)).unwrap();
+        }
+        let after = std::fs::read(&path).unwrap();
+        assert_eq!(before, after);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), len as u64);
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), mtime);
+        assert!(!dir.join("ok.db-wal").exists());
+        assert!(!dir.join("ok.db-shm").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

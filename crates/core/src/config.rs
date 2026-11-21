@@ -40,6 +40,10 @@ struct ConfigEnvelope {
 }
 
 pub fn dev_trust_explicitly_enabled() -> bool {
+    // release 构建不接受环境变量打开的开发信任，避免生产静默回退。
+    if !cfg!(debug_assertions) {
+        return false;
+    }
     std::env::var("LUDAO_CONFIG_DEV_TRUST")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
@@ -341,6 +345,10 @@ mod tests {
 
     #[test]
     fn dev_trust_roundtrip_with_ephemeral_seed() {
+        if !cfg!(debug_assertions) {
+            with_dev_trust(|_| assert!(!dev_trust_explicitly_enabled()));
+            return;
+        }
         with_dev_trust(|_| {
             let conn = mem_conn();
             let payload = r#"{"kind":"holidays","config_id":"cn-statutory-2026","schemaVersion":1,"version":"2026.1","effectiveFrom":"2026-01-01","holidays":[]}"#;
@@ -367,6 +375,10 @@ mod tests {
 
     #[test]
     fn evil_envelope_rejected_under_dev_trust() {
+        if !cfg!(debug_assertions) {
+            with_dev_trust(|_| assert!(!dev_trust_explicitly_enabled()));
+            return;
+        }
         with_dev_trust(|_dev_key| {
             let conn = mem_conn();
             let env = dev_seal_envelope(

@@ -475,6 +475,7 @@ pub struct AssistantRuntimeStatusDto {
 pub struct CapabilityGrantDto {
     pub token: String,
     pub matter_id: String,
+    pub session_id: String,
     pub expires_at: String,
 }
 
@@ -511,4 +512,5 @@ pub struct AssistantRunDraftInput {
     pub case_id: String,
     pub intent: String,
     pub capability_token: String,
+    pub session_id: String,
 }

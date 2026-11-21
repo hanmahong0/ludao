@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -10,6 +11,9 @@ pub const PINNED_TAG: &str = "v0.9.0";
 pub const PINNED_COMMIT: &str = "6c78ba59bce6a3d5079cf0c0310488770e264ad4";
 pub const PINNED_LINUX_SHA256: &str =
     "ce9cdfd3d419ff2ee668b0741d4cea41eaee9c637c6f590c3faf3e37b6507db9";
+/// 解压后的 linux 可执行文件，不是 tar.gz。Windows 解压二进制未核。
+pub const PINNED_BINARY_SHA256: &str =
+    "6fe61f4c0288e355081a0a93619b51e7ce572412be99c2e8fb0a59244e0b496b";
 
 #[derive(Debug)]
 pub struct RpcLine {
@@ -63,6 +67,7 @@ pub struct RpcClient {
     writer: std::os::unix::net::UnixStream,
     reader: BufReader<std::os::unix::net::UnixStream>,
     next_id: i64,
+    pending: VecDeque<RpcLine>,
     pub initialized: bool,
     pub server_version: Option<String>,
 }
@@ -83,9 +88,23 @@ impl RpcClient {
             writer,
             reader,
             next_id: 1,
+            pending: VecDeque::new(),
             initialized: false,
             server_version: None,
         })
+    }
+
+    fn read_socket(&mut self) -> Result<RpcLine, String> {
+        read_line(&mut self.reader)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "rpc eof".to_string())
+    }
+
+    fn read_next(&mut self) -> Result<RpcLine, String> {
+        if let Some(line) = self.pending.pop_front() {
+            return Ok(line);
+        }
+        self.read_socket()
     }
 
     fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
@@ -98,9 +117,7 @@ impl RpcClient {
             if Instant::now() > deadline {
                 return Err("rpc timeout waiting response".into());
             }
-            let line = read_line(&mut self.reader)
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| "rpc eof".to_string())?;
+            let line = self.read_socket()?;
             if line.value.get("id") == Some(&json!(id)) {
                 if let Some(err) = line.value.get("error") {
                     return Err(err.to_string());
@@ -111,7 +128,9 @@ impl RpcClient {
                     .cloned()
                     .ok_or_else(|| format!("missing result: {}", line.raw));
             }
-            // notifications (session/update) ignored here; turn waiter reads separately
+            if line.value.get("method").and_then(|m| m.as_str()) == Some("session/update") {
+                self.pending.push_back(line);
+            }
         }
     }
 
@@ -134,13 +153,10 @@ impl RpcClient {
     }
 
     pub fn session_new(&mut self, agent_alias: &str) -> Result<String, String> {
-        let result = self.request(
-            "session/new",
-            json!({"agentAlias": agent_alias, "keep_siblings": true}),
-        )?;
+        let result = self.request("session/new", json!({"agent_alias": agent_alias}))?;
         result
-            .get("sessionId")
-            .or_else(|| result.get("session_id"))
+            .get("session_id")
+            .or_else(|| result.get("sessionId"))
             .and_then(|v| v.as_str())
             .map(String::from)
             .ok_or_else(|| format!("session/new missing id: {result}"))
@@ -149,7 +165,7 @@ impl RpcClient {
     pub fn session_prompt(&mut self, session_id: &str, text: &str) -> Result<(), String> {
         let _ack = self.request(
             "session/prompt",
-            json!({"sessionId": session_id, "prompt": [{"type":"text","text": text}]}),
+            json!({"session_id": session_id, "prompt": text}),
         )?;
         Ok(())
     }
@@ -164,18 +180,14 @@ impl RpcClient {
         let mut raw_events = 0usize;
         let mut completed = false;
         while Instant::now() < deadline {
-            let line = match read_line(&mut self.reader) {
-                Ok(Some(l)) => l,
-                Ok(None) => return Err("turn stream eof".into()),
-                Err(e) => return Err(e.to_string()),
-            };
+            let line = self.read_next()?;
             raw_events += 1;
             let method = line.value.get("method").and_then(|m| m.as_str());
             if method == Some("session/update") {
                 if let Some(params) = line.value.get("params") {
                     let sid = params
-                        .get("sessionId")
-                        .or_else(|| params.get("session_id"))
+                        .get("session_id")
+                        .or_else(|| params.get("sessionId"))
                         .and_then(|s| s.as_str());
                     if sid != Some(session_id) {
                         continue;
@@ -187,6 +199,19 @@ impl RpcClient {
                         }
                     }
                     if ty == "turn_complete" {
+                        let outcome = params.get("outcome").and_then(|o| o.as_str()).unwrap_or("");
+                        if outcome == "failed" {
+                            let msg = params
+                                .get("content")
+                                .and_then(|c| c.as_str())
+                                .unwrap_or("turn failed");
+                            return Err(msg.to_string());
+                        }
+                        if text_chunks.is_empty() {
+                            if let Some(t) = params.get("content").and_then(|c| c.as_str()) {
+                                text_chunks.push(t.to_string());
+                            }
+                        }
                         completed = true;
                         break;
                     }
@@ -201,12 +226,12 @@ impl RpcClient {
     }
 
     pub fn session_cancel(&mut self, session_id: &str) -> Result<(), String> {
-        let _ = self.request("session/cancel", json!({"sessionId": session_id}))?;
+        self.request("session/cancel", json!({"session_id": session_id}))?;
         Ok(())
     }
 
     pub fn session_state(&mut self, session_id: &str) -> Result<Value, String> {
-        self.request("session/state", json!({"sessionId": session_id}))
+        self.request("session/state", json!({"session_id": session_id}))
     }
 }
 

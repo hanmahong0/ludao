@@ -46,6 +46,29 @@ CREATE VIRTUAL TABLE IF NOT EXISTS public_passage_fts USING fts5(
 "#;
 
 /// 测试/本地开发：在打开库前设置 `LUDAO_CONFIG_DEV_TRUST=1` 与 `LUDAO_CONFIG_DEV_SEED`（32 字节 hex）。
+pub fn snapshot_db_key() -> String {
+    std::env::var("LUDAO_DB_KEY").unwrap_or_else(|_| SYNTHETIC_DB_KEY.to_string())
+}
+
+/// 只读打开已有快照。不建库、不播种、不迁移。
+pub fn open_readonly_snapshot(db_path: &str) -> Result<Connection, String> {
+    if !std::path::Path::new(db_path).is_file() {
+        return Err(format!("snapshot_missing: {db_path}"));
+    }
+    let key = if let Ok(k) = std::env::var("LUDAO_DB_KEY") {
+        k
+    } else if let Ok(path) = std::env::var("LUDAO_DB_KEY_FILE") {
+        std::fs::read_to_string(&path).map_err(|e| format!("db_key_file: {e}"))?
+    } else {
+        return Err("LUDAO_DB_KEY or LUDAO_DB_KEY_FILE required for readonly snapshot".into());
+    };
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        return Err("LUDAO_DB_KEY 不能为空".into());
+    }
+    vault::open_encrypted_readonly(db_path, &key).map_err(|e| e.to_string())
+}
+
 pub fn open_and_init(db_path: &str) -> Result<Connection, String> {
     let key = std::env::var("LUDAO_DB_KEY").unwrap_or_else(|_| SYNTHETIC_DB_KEY.to_string());
     if key.trim().is_empty() {
@@ -206,7 +229,7 @@ fn seed_public_fixtures(conn: &Connection, now: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO public_passage (passage_id, case_version, section_type, text_excerpt, locator, content_hash) \
-         VALUES ('pub-p-p1','pub-p-v1','holding','【合成案例，非法院文书】认定存在借贷合意且已交付借款。','第3页第2段',?1)",
+         VALUES ('pub-p-p1','pub-p-v1','holding','【合成案例，非法院文书】认定存在借贷合意且已交付借款。','passage:pub-p-p1',?1)",
         [vault::sha256_hex(b"synthetic-passage-p1")],
     )
     .map_err(|e| e.to_string())?;
@@ -225,7 +248,7 @@ fn seed_public_fixtures(conn: &Connection, now: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO public_passage (passage_id, case_version, section_type, text_excerpt, locator, content_hash) \
-         VALUES ('pub-q-p1','pub-q-v1','holding','【合成案例，非法院文书】仅凭聊天记录无法证明款项已实际交付。','第2页第1段',?1)",
+         VALUES ('pub-q-p1','pub-q-v1','holding','【合成案例，非法院文书】仅凭聊天记录无法证明款项已实际交付。','passage:pub-q-p1',?1)",
         [vault::sha256_hex(b"synthetic-passage-q1")],
     )
     .map_err(|e| e.to_string())?;

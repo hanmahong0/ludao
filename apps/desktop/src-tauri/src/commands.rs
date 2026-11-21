@@ -1518,12 +1518,13 @@ pub fn search_private_documents(
     conn: &Connection,
     scope: &crate::scope::ScopeRegistry,
     capability_token: &str,
+    session_id: &str,
     matter_id: &str,
     query: &str,
     limit: i64,
 ) -> Result<Vec<crate::dto::PrivatePassageHitDto>, String> {
     scope
-        .validate(capability_token, matter_id)
+        .validate(capability_token, matter_id, session_id)
         .map_err(|e| e.to_string())?;
     if case_get(conn, matter_id)?.is_none() {
         return Err("scope_denied: unknown matter".into());
@@ -1536,35 +1537,43 @@ pub fn search_private_documents(
     );
     let mut stmt = conn
         .prepare(
-            "SELECT id, case_id, name, COALESCE(seq, 0), COALESCE(original_hash, '') FROM evidence \
-             WHERE case_id = ?1 AND _deleted = 0 AND name LIKE ?2 ESCAPE '\\' \
+            "SELECT id, case_id, name, COALESCE(seq, 0), COALESCE(original_hash, ''), \
+             COALESCE(proof_target, '') FROM evidence \
+             WHERE case_id = ?1 AND _deleted = 0 \
+             AND (name LIKE ?2 ESCAPE '\\' OR proof_target LIKE ?2 ESCAPE '\\') \
              ORDER BY seq LIMIT ?3",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map((matter_id, pattern, limit), |r| {
+        .query_map((matter_id, pattern.as_str(), limit), |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, i64>(3)?,
                 r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
             ))
         })
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, case_id, name, seq, hash) = row.map_err(|e| e.to_string())?;
+        let (id, case_id, name, seq, hash, proof) = row.map_err(|e| e.to_string())?;
         let content_hash = if hash.is_empty() {
-            vault::sha256_hex(name.as_bytes())
+            vault::sha256_hex(format!("{name}|{proof}").as_bytes())
         } else {
             hash
         };
         let document_version = format!("{case_id}@evidence@{content_hash}");
+        let excerpt = if proof.is_empty() {
+            name
+        } else {
+            format!("{name} · {proof}")
+        };
         out.push(crate::dto::PrivatePassageHitDto {
             passage_id: id.clone(),
             document_version,
-            excerpt: truncate_excerpt(&name, 240),
+            excerpt: truncate_excerpt(&excerpt, 240),
             locator: Some(format!("evidence_seq:{seq}")),
             content_hash: Some(content_hash),
         });
@@ -1736,22 +1745,42 @@ mod legal_scope_tests {
         (conn, ScopeRegistry::new())
     }
 
+    fn confirmed(scope: &ScopeRegistry, matter: &str) -> (String, crate::scope::CapabilityGrant) {
+        let sid = scope.host_session_id();
+        scope.confirm_selection(&sid, matter).unwrap();
+        let g = scope.issue_for_confirmed(&sid, matter, 600).unwrap();
+        (sid, g)
+    }
+
     #[test]
     fn cross_matter_private_search_denied_with_grant() {
         let (conn, scope) = test_conn();
-        let g = scope.issue_for_matter("case-001", 600).unwrap();
-        let err =
-            search_private_documents(&conn, &scope, &g.token, "case-002", "合成", 3).unwrap_err();
+        let (sid, g) = confirmed(&scope, "case-001");
+        let err = search_private_documents(&conn, &scope, &g.token, &sid, "case-002", "合成", 3)
+            .unwrap_err();
         assert!(err.contains("scope_denied"));
         assert!(err.contains("mismatch"));
+        let self_grant = scope.issue_for_confirmed(&sid, "case-002", 600).unwrap_err();
+        assert!(self_grant.contains("not the host-confirmed"));
     }
 
     #[test]
     fn wildcard_private_query_rejected() {
         let (conn, scope) = test_conn();
-        let g = scope.issue_for_matter("case-001", 600).unwrap();
-        let err = search_private_documents(&conn, &scope, &g.token, "case-001", "%", 3).unwrap_err();
+        let (sid, g) = confirmed(&scope, "case-001");
+        let err = search_private_documents(&conn, &scope, &g.token, &sid, "case-001", "%", 3)
+            .unwrap_err();
         assert!(err.contains("wildcard"));
+    }
+
+    #[test]
+    fn quoted_public_chinese_matches_bare_term() {
+        let (conn, _) = test_conn();
+        let quoted = search_public_cases(&conn, "\"借贷\"", 5).unwrap();
+        let bare = search_public_cases(&conn, "借贷", 5).unwrap();
+        assert!(!quoted.is_empty());
+        assert_eq!(quoted[0].passage_id, bare[0].passage_id);
+        assert!(!quoted[0].locator.as_deref().unwrap_or("").contains('页'));
     }
 
     #[test]
@@ -1760,6 +1789,19 @@ mod legal_scope_tests {
         let err = search_public_cases(&conn, "%", 5).unwrap_err();
         assert!(err.contains("wildcard"));
         let err = search_public_cases(&conn, &"%".repeat(200), 5).unwrap_err();
+        assert!(err.contains("too_long"));
+    }
+
+    #[test]
+    fn public_search_limit_is_clamped() {
+        let (conn, _) = test_conn();
+        let one = search_public_cases(&conn, "借贷", 0).unwrap();
+        assert_eq!(one.len(), 1);
+        let capped = search_public_cases(&conn, "借贷", 9999).unwrap();
+        assert!(capped.len() <= 50);
+        assert!(capped.len() >= 1);
+        let long = "合".repeat(200);
+        let err = search_public_cases(&conn, &long, 5).unwrap_err();
         assert!(err.contains("too_long"));
     }
 

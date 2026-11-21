@@ -6,7 +6,7 @@ mod live {
     use uuid::Uuid;
 
     #[test]
-    #[ignore = "requires verified LUDAO_ZEROCLAW_BIN"]
+    #[ignore = "handshake-only; tests/legal_loop.rs is the daemon+MCP probe"]
     fn product_initialize_handshake() {
         let data_dir = std::env::temp_dir().join(format!("ludao-zc-it-{}", Uuid::new_v4()));
         let socket = data_dir.join("daemon.sock");

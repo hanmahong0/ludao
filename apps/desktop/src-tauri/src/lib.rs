@@ -214,6 +214,20 @@ fn assistant_run_draft(
 }
 
 #[tauri::command]
+fn scope_confirm_selection(
+    scopes: State<ScopeRegistry>,
+    state: State<DbState>,
+    matter_id: String,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    if commands::case_get(&conn, &matter_id)?.is_none() {
+        return Err("scope_confirm: unknown matter".into());
+    }
+    let sid = scopes.host_session_id();
+    scopes.confirm_selection(&sid, &matter_id)
+}
+
+#[tauri::command]
 fn scope_grant_for_matter(
     scopes: State<ScopeRegistry>,
     state: State<DbState>,
@@ -223,10 +237,12 @@ fn scope_grant_for_matter(
     if commands::case_get(&conn, &matter_id)?.is_none() {
         return Err("scope_issue: unknown matter".into());
     }
-    let g = scopes.issue_for_matter(&matter_id, 3600)?;
+    let sid = scopes.host_session_id();
+    let g = scopes.issue_for_confirmed(&sid, &matter_id, 3600)?;
     Ok(CapabilityGrantDto {
         token: g.token,
         matter_id: g.matter_id,
+        session_id: g.session_id,
         expires_at: g.expires_at.to_rfc3339(),
     })
 }
@@ -236,6 +252,7 @@ fn search_private_documents(
     state: State<DbState>,
     scopes: State<ScopeRegistry>,
     capability_token: String,
+    session_id: String,
     matter_id: String,
     query: String,
     limit: Option<i64>,
@@ -245,6 +262,7 @@ fn search_private_documents(
         &conn,
         &scopes,
         &capability_token,
+        &session_id,
         &matter_id,
         &query,
         limit.unwrap_or(10),
@@ -264,9 +282,10 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let db_path = dir.join("lurus.db");
-            if std::env::var("LUDAO_SYNTHETIC_DEV_BUNDLE")
-                .map(|v| v == "1")
-                .unwrap_or(false)
+            if cfg!(debug_assertions)
+                && std::env::var("LUDAO_SYNTHETIC_DEV_BUNDLE")
+                    .map(|v| v == "1")
+                    .unwrap_or(false)
             {
                 db::enable_dev_config_trust_for_tests();
             }
@@ -302,6 +321,7 @@ pub fn run() {
             conflict_scan,
             search_public_cases,
             search_private_documents,
+            scope_confirm_selection,
             scope_grant_for_matter,
             compare_public_cases,
             assistant_status,
