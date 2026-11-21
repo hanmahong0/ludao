@@ -272,6 +272,8 @@ pub fn run() {
             }
             let conn = db::open_and_init(&db_path.to_string_lossy())
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            // 子进程 MCP / sidecar 只读继承，禁止前端改写。
+            std::env::set_var("LUDAO_DB_PATH", &db_path);
             app.manage(DbState(Mutex::new(conn)));
             app.manage(ScopeRegistry::new());
             app.manage(AssistantSupervisor::new());

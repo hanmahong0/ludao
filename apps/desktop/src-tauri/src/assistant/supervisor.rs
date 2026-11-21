@@ -1,6 +1,6 @@
 //! AgentSupervisor：子进程、RPC 会话、任务状态（默认关闭）。
 
-use super::sidecar::{spawn_daemon, SidecarHandle};
+use super::sidecar::{spawn_daemon, LudaoMcpEnv, SidecarHandle};
 use super::zeroclaw_rpc::{self, RpcClient, PINNED_COMMIT, PINNED_TAG};
 use crate::commands;
 use crate::dto::{
@@ -29,7 +29,9 @@ struct SupervisorInner {
     last_error: Option<String>,
     handshake_ok: bool,
     product_session_ready: bool,
+    mcp_attached: bool,
     model_configured: bool,
+    last_mcp_fingerprint: Option<String>,
     socket_path: Option<PathBuf>,
     #[cfg(unix)]
     active: Option<ActiveUnixRpc>,
@@ -42,6 +44,51 @@ impl AssistantSupervisor {
         Self {
             inner: Mutex::new(SupervisorInner::default()),
         }
+    }
+
+    #[cfg(unix)]
+    fn mcp_fingerprint(cap: &str, matter: &str) -> Result<String, String> {
+        let db = std::env::var("LUDAO_DB_PATH").map_err(|_| "LUDAO_DB_PATH 未设置".to_string())?;
+        Ok(format!("{db}|{matter}|{}", &cap[..cap.len().min(24)]))
+    }
+
+    #[cfg(unix)]
+    fn ensure_product_mcp(
+        inner: &mut SupervisorInner,
+        cap: &str,
+        matter: &str,
+    ) -> Result<(), String> {
+        let fp = Self::mcp_fingerprint(cap, matter)?;
+        if inner.mcp_attached && inner.last_mcp_fingerprint.as_deref() == Some(&fp) {
+            return Ok(());
+        }
+        let db_path = std::env::var("LUDAO_DB_PATH").map_err(|_| "LUDAO_DB_PATH 未设置".to_string())?;
+        let mcp = LudaoMcpEnv {
+            db_path: PathBuf::from(db_path),
+            capability_token: cap.to_string(),
+            matter_scope: matter.to_string(),
+        };
+        let (data_dir, socket) = if let Some(a) = inner.active.as_ref() {
+            (a.sidecar.data_dir.clone(), a.sidecar.socket_path.clone())
+        } else {
+            let data_dir = std::env::temp_dir().join(format!("ludao-zc-{}", Uuid::new_v4()));
+            let socket = data_dir.join("daemon.sock");
+            (data_dir, socket)
+        };
+        if let Some(mut a) = inner.active.take() {
+            a.sidecar.stop();
+        }
+        let sidecar = spawn_daemon(&data_dir, &socket, Some(&mcp))?;
+        let mut client = zeroclaw_rpc::RpcClient::connect(&socket, Duration::from_secs(12))?;
+        client.initialize()?;
+        inner.socket_path = Some(socket);
+        inner.handshake_ok = true;
+        inner.enabled = true;
+        inner.product_session_ready = true;
+        inner.mcp_attached = super::sidecar::resolve_legal_mcp_binary().is_ok();
+        inner.last_mcp_fingerprint = Some(fp);
+        inner.active = Some(ActiveUnixRpc { sidecar, client });
+        Ok(())
     }
 
     fn status_locked(inner: &SupervisorInner) -> AssistantRuntimeStatusDto {
@@ -63,7 +110,7 @@ impl AssistantSupervisor {
             handshake_ok: inner.handshake_ok,
             model_configured: inner.model_configured,
             disclosure: "Windows 无 OS 级沙箱。助手默认关闭；scope 由宿主 capability 签发。未配置本地模型时不发起 LLM turn。".into(),
-            mcp_attached: inner.product_session_ready,
+            mcp_attached: inner.mcp_attached,
         }
     }
 
@@ -78,6 +125,8 @@ impl AssistantSupervisor {
             inner.enabled = false;
             inner.handshake_ok = false;
             inner.product_session_ready = false;
+            inner.mcp_attached = false;
+            inner.last_mcp_fingerprint = None;
             #[cfg(unix)]
             if let Some(mut a) = inner.active.take() {
                 a.sidecar.stop();
@@ -90,7 +139,7 @@ impl AssistantSupervisor {
         {
             let data_dir = std::env::temp_dir().join(format!("ludao-zc-{}", Uuid::new_v4()));
             let socket = data_dir.join("daemon.sock");
-            match spawn_daemon(&data_dir, &socket) {
+            match spawn_daemon(&data_dir, &socket, None) {
                 Ok(mut sidecar) => {
                     inner.socket_path = Some(socket.clone());
                     match RpcClient::connect(&socket, Duration::from_secs(8)) {
@@ -100,6 +149,7 @@ impl AssistantSupervisor {
                                 inner.enabled = true;
                                 inner.last_error = None;
                                 inner.product_session_ready = true;
+                                inner.mcp_attached = false;
                                 inner.active = Some(ActiveUnixRpc { sidecar, client });
                             }
                             Err(e) => {
@@ -233,6 +283,18 @@ pub fn assistant_run_draft(
     {
         let mut inner = sup.inner.lock().map_err(|e| e.to_string())?;
         inner.active_task_id = Some(task_id.clone());
+        if let Err(e) = AssistantSupervisor::ensure_product_mcp(&mut inner, &input.capability_token, &input.case_id) {
+            drop(inner);
+            return Ok(AssistantDraftResultDto {
+                task_id: task_id.clone(),
+                state: "failed".into(),
+                text: String::new(),
+                citations: vec![],
+                coverage_note: None,
+                error: Some(e),
+                runtime_evidence: "product_handshake_verified".into(),
+            });
+        }
         if let Some(active) = inner.active.as_mut() {
             if !active.sidecar.running() {
                 inner.enabled = false;

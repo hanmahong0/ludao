@@ -82,4 +82,26 @@ mod tests {
             Err(QueryReject::WildcardForbidden)
         );
     }
+
+    #[test]
+    fn fts_chinese_and_multiword() {
+        let q = fts_and_query("借贷 合同").unwrap();
+        assert!(q.contains("借贷"));
+        assert!(q.contains("AND"));
+        let one = fts_and_query("贷").unwrap();
+        assert!(one.contains("贷"));
+    }
+
+    #[test]
+    fn strips_punctuation_for_fts() {
+        let q = fts_and_query("\"借条（合成）\"").unwrap();
+        assert!(!q.contains('%'));
+    }
+
+    #[test]
+    fn empty_and_length_limits() {
+        assert_eq!(normalize_private_query("   "), Err(QueryReject::Empty));
+        let long = "x".repeat(MAX_QUERY_CHARS + 1);
+        assert_eq!(normalize_private_query(&long), Err(QueryReject::TooLong));
+    }
 }

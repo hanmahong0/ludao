@@ -10,7 +10,7 @@ mod live {
     fn product_initialize_handshake() {
         let data_dir = std::env::temp_dir().join(format!("ludao-zc-it-{}", Uuid::new_v4()));
         let socket = data_dir.join("daemon.sock");
-        let mut handle = spawn_daemon(&data_dir, &socket).expect("spawn");
+        let mut handle = spawn_daemon(&data_dir, &socket, None).expect("spawn");
         let mut client =
             RpcClient::connect(&socket, Duration::from_secs(10)).expect("connect");
         let init = client.initialize().expect("initialize");
