@@ -1,54 +1,40 @@
-//! AgentSupervisor：固定 ZeroClaw 二进制路径、健康检查、任务状态（默认关闭）。
+//! AgentSupervisor：子进程、RPC 会话、任务状态（默认关闭）。
 
-use super::zeroclaw_rpc::{self, PINNED_COMMIT, PINNED_TAG};
+use super::sidecar::{spawn_daemon, SidecarHandle};
+use super::zeroclaw_rpc::{self, RpcClient, PINNED_COMMIT, PINNED_TAG};
 use crate::commands;
 use crate::dto::{
     AssistantCitationDto, AssistantDraftResultDto, AssistantRunDraftInput, AssistantRuntimeStatusDto,
 };
+use crate::scope::ScopeRegistry;
 use rusqlite::Connection;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 use uuid::Uuid;
 
-const DEFAULT_SOCKET: &str = "/tmp/ludao-zeroclaw-test.sock";
+#[cfg(unix)]
+struct ActiveUnixRpc {
+    sidecar: SidecarHandle,
+    client: RpcClient,
+}
 
 pub struct AssistantSupervisor {
     inner: Mutex<SupervisorInner>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Default)]
 struct SupervisorInner {
     enabled: bool,
     last_error: Option<String>,
     handshake_ok: bool,
-    socket_path: PathBuf,
-    binary_path: Option<PathBuf>,
-}
-
-impl Default for SupervisorInner {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            last_error: None,
-            handshake_ok: false,
-            socket_path: PathBuf::from(
-                std::env::var("LUDAO_ZEROCLAW_SOCKET").unwrap_or_else(|_| DEFAULT_SOCKET.to_string()),
-            ),
-            binary_path: std::env::var("LUDAO_ZEROCLAW_BIN")
-                .ok()
-                .map(PathBuf::from)
-                .or_else(default_binary_path),
-        }
-    }
-}
-
-fn default_binary_path() -> Option<PathBuf> {
-    let candidates = [
-        PathBuf::from("vendor/zeroclaw/zeroclaw"),
-        PathBuf::from("/workspace/vendor/zeroclaw/zeroclaw"),
-    ];
-    candidates.into_iter().find(|p| p.is_file())
+    product_session_ready: bool,
+    model_configured: bool,
+    socket_path: Option<PathBuf>,
+    #[cfg(unix)]
+    active: Option<ActiveUnixRpc>,
+    active_session_id: Option<String>,
+    active_task_id: Option<String>,
 }
 
 impl AssistantSupervisor {
@@ -59,22 +45,25 @@ impl AssistantSupervisor {
     }
 
     fn status_locked(inner: &SupervisorInner) -> AssistantRuntimeStatusDto {
-        let binary_present = inner
-            .binary_path
-            .as_ref()
-            .map(|p| p.is_file())
-            .unwrap_or(false);
         AssistantRuntimeStatusDto {
             enabled: inner.enabled,
-            configured: binary_present,
-            runtime_kind: if inner.enabled { "zeroclaw".into() } else { "disabled".into() },
+            configured: super::sidecar::resolve_binary_path().is_ok(),
+            runtime_kind: if inner.enabled {
+                "zeroclaw".into()
+            } else {
+                "disabled".into()
+            },
             pinned_version: format!("{PINNED_TAG}@{PINNED_COMMIT}"),
-            binary_present,
-            socket_path: Some(inner.socket_path.to_string_lossy().into_owned()),
+            binary_present: super::sidecar::resolve_binary_path().is_ok(),
+            socket_path: inner
+                .socket_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned()),
             last_error: inner.last_error.clone(),
             handshake_ok: inner.handshake_ok,
-            model_configured: false,
-            disclosure: "Windows 上 ZeroClaw 无 OS 级沙箱；助手默认关闭。私卷 scope 由宿主签发并逐次校验。".into(),
+            model_configured: inner.model_configured,
+            disclosure: "Windows 无 OS 级沙箱。助手默认关闭；scope 由宿主 capability 签发。未配置本地模型时不发起 LLM turn。".into(),
+            mcp_attached: inner.product_session_ready,
         }
     }
 
@@ -85,39 +74,123 @@ impl AssistantSupervisor {
 
     pub fn set_enabled(&self, enabled: bool) -> Result<AssistantRuntimeStatusDto, String> {
         let mut inner = self.inner.lock().map_err(|e| e.to_string())?;
-        inner.enabled = enabled;
-        inner.last_error = None;
-        inner.handshake_ok = false;
-        if enabled {
-            if let Some(bin) = inner.binary_path.clone() {
-                if !bin.is_file() {
-                    inner.last_error = Some(format!("未找到固定 ZeroClaw 二进制：{}", bin.display()));
-                    inner.enabled = false;
-                    return Ok(Self::status_locked(&inner));
-                }
-            } else {
-                inner.last_error = Some("未配置 LUDAO_ZEROCLAW_BIN 或 vendor/zeroclaw/zeroclaw".into());
-                inner.enabled = false;
-                return Ok(Self::status_locked(&inner));
+        if !enabled {
+            inner.enabled = false;
+            inner.handshake_ok = false;
+            inner.product_session_ready = false;
+            #[cfg(unix)]
+            if let Some(mut a) = inner.active.take() {
+                a.sidecar.stop();
             }
-            match zeroclaw_rpc::handshake_unix(&inner.socket_path, Duration::from_secs(5)) {
-                Ok(res) => {
-                    inner.handshake_ok = true;
-                    if res.server_version.as_deref() != Some("0.9.0") {
-                        inner.last_error = Some(format!(
-                            "服务端版本 {:?} 与固定 {} 不一致",
-                            res.server_version, PINNED_TAG
-                        ));
+            inner.active_session_id = None;
+            return Ok(Self::status_locked(&inner));
+        }
+
+        #[cfg(unix)]
+        {
+            let data_dir = std::env::temp_dir().join(format!("ludao-zc-{}", Uuid::new_v4()));
+            let socket = data_dir.join("daemon.sock");
+            match spawn_daemon(&data_dir, &socket) {
+                Ok(mut sidecar) => {
+                    inner.socket_path = Some(socket.clone());
+                    match RpcClient::connect(&socket, Duration::from_secs(8)) {
+                        Ok(mut client) => match client.initialize() {
+                            Ok(_) => {
+                                inner.handshake_ok = true;
+                                inner.enabled = true;
+                                inner.last_error = None;
+                                inner.product_session_ready = true;
+                                inner.active = Some(ActiveUnixRpc { sidecar, client });
+                            }
+                            Err(e) => {
+                                sidecar.stop();
+                                inner.enabled = false;
+                                inner.handshake_ok = false;
+                                inner.last_error = Some(format!("产品 RPC initialize 失败: {e}"));
+                            }
+                        },
+                        Err(e) => {
+                            sidecar.stop();
+                            inner.enabled = false;
+                            inner.last_error = Some(e);
+                        }
                     }
                 }
                 Err(e) => {
-                    inner.handshake_ok = false;
-                    inner.last_error = Some(format!("RPC 握手失败：{e}"));
                     inner.enabled = false;
+                    inner.last_error = Some(e);
                 }
             }
         }
+        #[cfg(not(unix))]
+        {
+            inner.enabled = false;
+            inner.last_error = Some("当前平台未实现 sidecar".into());
+        }
         Ok(Self::status_locked(&inner))
+    }
+
+    fn rules_summary_draft(
+        conn: &Connection,
+        scope: &ScopeRegistry,
+        input: &AssistantRunDraftInput,
+        task_id: &str,
+        evidence: &str,
+    ) -> Result<AssistantDraftResultDto, String> {
+        scope
+            .validate(&input.capability_token, &input.case_id)
+            .map_err(|e| e.to_string())?;
+        let ctx = commands::agent_context(conn, &input.case_id)?;
+        let private_hits = commands::search_private_documents(
+            conn,
+            scope,
+            &input.capability_token,
+            &input.case_id,
+            &input.intent,
+            3,
+        )?;
+        let public_hits = commands::search_public_cases(conn, &input.intent, 3)?;
+        let mut citations = Vec::new();
+        for h in &private_hits {
+            citations.push(AssistantCitationDto {
+                kind: "private_excerpt".into(),
+                passage_id: Some(h.passage_id.clone()),
+                case_version: None,
+                locator: h.locator.clone(),
+                excerpt: h.excerpt.clone(),
+            });
+        }
+        for h in &public_hits {
+            citations.push(AssistantCitationDto {
+                kind: "public_case".into(),
+                passage_id: Some(h.passage_id.clone()),
+                case_version: Some(h.case_version.clone()),
+                locator: h.locator.clone(),
+                excerpt: h.excerpt.clone(),
+            });
+        }
+        let mut text = format!(
+            "【规则摘要·非模型输出】案由：{}\n事实摘要：{}\n",
+            ctx.case_type, ctx.facts_summary
+        );
+        for (i, c) in citations.iter().enumerate() {
+            text.push_str(&format!(
+                "{}. [{}] {} …\n",
+                i + 1,
+                c.kind,
+                &c.excerpt[..c.excerpt.len().min(80)]
+            ));
+        }
+        text.push_str("\n（未发生 LLM turn；仅供检索对照。）\n");
+        Ok(AssistantDraftResultDto {
+            task_id: task_id.to_string(),
+            state: "succeeded".into(),
+            text,
+            citations,
+            coverage_note: Some("rules_summary_only".into()),
+            error: None,
+            runtime_evidence: evidence.into(),
+        })
     }
 }
 
@@ -125,14 +198,17 @@ pub fn assistant_status(sup: &AssistantSupervisor) -> AssistantRuntimeStatusDto 
     sup.status()
 }
 
-pub fn assistant_set_enabled(sup: &AssistantSupervisor, enabled: bool) -> Result<AssistantRuntimeStatusDto, String> {
+pub fn assistant_set_enabled(
+    sup: &AssistantSupervisor,
+    enabled: bool,
+) -> Result<AssistantRuntimeStatusDto, String> {
     sup.set_enabled(enabled)
 }
 
-/// 无本地模型时仍可用宿主法律工具检索 + 规则化草稿（MOCK/REAL_RPC_STUB 分级）。
 pub fn assistant_run_draft(
     conn: &Connection,
     sup: &AssistantSupervisor,
+    scope: &ScopeRegistry,
     input: AssistantRunDraftInput,
 ) -> Result<AssistantDraftResultDto, String> {
     let task_id = Uuid::new_v4().to_string();
@@ -143,66 +219,134 @@ pub fn assistant_run_draft(
             state: "failed".into(),
             text: String::new(),
             citations: vec![],
-            coverage_note: Some("助手未启用。请在设置中启用并配置 ZeroClaw 与本地模型。".into()),
+            coverage_note: None,
             error: Some("assistant_disabled".into()),
-            runtime_evidence: "mock".into(),
+            runtime_evidence: "disabled".into(),
         });
     }
 
-    let ctx = commands::agent_context(conn, &input.case_id)?;
-    let private_hits = commands::search_private_documents(conn, &input.case_id, &input.intent, 3)?;
-    let public_hits = commands::search_public_cases(conn, &input.intent, 3)?;
+    scope
+        .validate(&input.capability_token, &input.case_id)
+        .map_err(|e| e.to_string())?;
 
-    let mut citations: Vec<AssistantCitationDto> = Vec::new();
-    for h in &private_hits {
-        citations.push(AssistantCitationDto {
-            kind: "private_excerpt".into(),
-            passage_id: Some(h.passage_id.clone()),
-            case_version: None,
-            locator: h.locator.clone(),
-            excerpt: h.excerpt.clone(),
-        });
-    }
-    for h in &public_hits {
-        citations.push(AssistantCitationDto {
-            kind: "public_case".into(),
-            passage_id: Some(h.passage_id.clone()),
-            case_version: Some(h.case_version.clone()),
-            locator: h.locator.clone(),
-            excerpt: h.excerpt.clone(),
-        });
+    #[cfg(unix)]
+    {
+        let mut inner = sup.inner.lock().map_err(|e| e.to_string())?;
+        inner.active_task_id = Some(task_id.clone());
+        if let Some(active) = inner.active.as_mut() {
+            if !active.sidecar.running() {
+                inner.enabled = false;
+                inner.handshake_ok = false;
+                return Ok(AssistantDraftResultDto {
+                    task_id: task_id.clone(),
+                    state: "interrupted".into(),
+                    text: String::new(),
+                    citations: vec![],
+                    coverage_note: None,
+                    error: Some("sidecar_exited".into()),
+                    runtime_evidence: "product_handshake_verified".into(),
+                });
+            } else {
+                let session_id = match active.client.session_new("default") {
+                    Ok(id) => id,
+                    Err(e) => {
+                        inner.active_session_id = None;
+                        drop(inner);
+                        return AssistantSupervisor::rules_summary_draft(
+                            conn,
+                            scope,
+                            &input,
+                            &task_id,
+                            "product_handshake_verified",
+                        )
+                        .map(|mut r| {
+                            r.error = Some(format!("session/new failed: {e}"));
+                            r.state = "failed".into();
+                            r
+                        });
+                    }
+                };
+                inner.active_session_id = Some(session_id.clone());
+                drop(inner);
+                let prompt = format!(
+                    "仅基于授权案件工具结果回答（无工具权不得臆测）: {}",
+                    input.intent
+                );
+                let mut inner = sup.inner.lock().map_err(|e| e.to_string())?;
+                let Some(active) = inner.active.as_mut() else {
+                    return AssistantSupervisor::rules_summary_draft(
+                        conn,
+                        scope,
+                        &input,
+                        &task_id,
+                        "product_handshake_verified",
+                    );
+                };
+                if active.client.session_prompt(&session_id, &prompt).is_err() {
+                    drop(inner);
+                    return AssistantSupervisor::rules_summary_draft(
+                        conn,
+                        scope,
+                        &input,
+                        &task_id,
+                        "product_handshake_verified",
+                    );
+                }
+                let turn = active.client.wait_turn(&session_id, Duration::from_secs(8));
+                drop(inner);
+                match turn {
+                    Ok(t) if t.completed && !t.text_chunks.is_empty() => {
+                        return Ok(AssistantDraftResultDto {
+                            task_id,
+                            state: "succeeded".into(),
+                            text: t.text_chunks.join(""),
+                            citations: vec![],
+                            coverage_note: Some("product_tool_turn_verified".into()),
+                            error: None,
+                            runtime_evidence: "product_tool_turn_verified".into(),
+                        });
+                    }
+                    Ok(_) => {
+                        return AssistantSupervisor::rules_summary_draft(
+                            conn,
+                            scope,
+                            &input,
+                            &task_id,
+                            "product_handshake_verified",
+                        );
+                    }
+                    Err(e) => {
+                        return Ok(AssistantDraftResultDto {
+                            task_id,
+                            state: "failed".into(),
+                            text: String::new(),
+                            citations: vec![],
+                            coverage_note: None,
+                            error: Some(e),
+                            runtime_evidence: "product_handshake_verified".into(),
+                        });
+                    }
+                }
+            }
+        }
     }
 
-    let runtime_evidence = if st.handshake_ok {
-        "real_rpc_stub_model"
-    } else {
-        "mock"
-    };
-
-    let mut text = format!(
-        "【分析草稿·非法律意见】案由：{}\n争点摘要：{}\n",
-        ctx.case_type, ctx.facts_summary
-    );
-    text.push_str("检索到的授权材料摘录：\n");
-    for (i, c) in citations.iter().enumerate() {
-        text.push_str(&format!("{}. [{}] {} …\n", i + 1, c.kind, &c.excerpt[..c.excerpt.len().min(80)]));
-    }
-    if public_hits.is_empty() && private_hits.is_empty() {
-        text.push_str("\n资料不足以形成判断；未编造案号或页码。\n");
-    }
-  text.push_str("\n（未配置本地 LLM：本结果为宿主工具检索 + 规则化汇总，不含模型推理。）\n");
-
-    Ok(AssistantDraftResultDto {
-        task_id,
-        state: "succeeded".into(),
-        text,
-        citations,
-        coverage_note: Some("仅覆盖授权 scope 内已索引页段；未索引页不会出现在摘录中。".into()),
-        error: None,
-        runtime_evidence: runtime_evidence.into(),
-    })
+    AssistantSupervisor::rules_summary_draft(conn, scope, &input, &task_id, "rules_summary_only")
 }
 
-pub fn assistant_cancel(_sup: &AssistantSupervisor, _task_id: &str) -> Result<(), String> {
+pub fn assistant_cancel(sup: &AssistantSupervisor, task_id: &str) -> Result<(), String> {
+    let mut inner = sup.inner.lock().map_err(|e| e.to_string())?;
+    if inner.active_task_id.as_deref() != Some(task_id) {
+        return Err("cancel: unknown task".into());
+    }
+    #[cfg(unix)]
+    {
+        let sid = inner.active_session_id.clone();
+        if let (Some(active), Some(sid)) = (inner.active.as_mut(), sid) {
+            let _ = active.client.session_cancel(&sid);
+            let _ = active.client.session_state(&sid);
+        }
+    }
+    inner.active_task_id = None;
     Ok(())
 }

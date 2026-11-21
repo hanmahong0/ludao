@@ -324,7 +324,14 @@ export interface AssistantRuntimeStatus {
   lastError?: string;
   handshakeOk: boolean;
   modelConfigured: boolean;
+  mcpAttached: boolean;
   disclosure: string;
+}
+
+export interface CapabilityGrant {
+  token: string;
+  matterId: string;
+  expiresAt: string;
 }
 
 export interface AssistantCitation {
@@ -343,7 +350,11 @@ export interface AssistantDraftResult {
   citations: AssistantCitation[];
   coverageNote?: string;
   error?: string;
-  runtimeEvidence: "mock" | "real_rpc_stub_model" | "real_local_model";
+  runtimeEvidence:
+    | "disabled"
+    | "rules_summary_only"
+    | "product_handshake_verified"
+    | "product_tool_turn_verified";
 }
 
 /** 出网脱敏上下文（由 rust-core agent_context 产出；对齐云端 DesensitizedContext schema） */

@@ -45,6 +45,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS public_passage_fts USING fts5(
 );
 "#;
 
+/// 测试/本地开发：在打开库前设置 `LUDAO_CONFIG_DEV_TRUST=1` 与 `LUDAO_CONFIG_DEV_SEED`（32 字节 hex）。
 pub fn open_and_init(db_path: &str) -> Result<Connection, String> {
     let key = std::env::var("LUDAO_DB_KEY").unwrap_or_else(|_| SYNTHETIC_DB_KEY.to_string());
     if key.trim().is_empty() {
@@ -104,6 +105,16 @@ fn seed_if_empty(conn: &Connection, now: &str) -> Result<(), String> {
             "借条扫描件（合成）",
             "electronic",
             "借贷合意",
+            now,
+        )?;
+        insert_evidence(
+            conn,
+            "ev-b1",
+            "case-002",
+            1,
+            "合成劳动合同（劳动争议）",
+            "book",
+            "劳动关系",
             now,
         )?;
         insert_fact(
@@ -227,12 +238,23 @@ fn seed_public_fixtures(conn: &Connection, now: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn enable_dev_config_trust_for_tests() {
+    use ed25519_dalek::SigningKey;
+    use rand::{rngs::OsRng, RngCore};
+    std::env::set_var("LUDAO_CONFIG_DEV_TRUST", "1");
+    let mut seed = [0u8; 32];
+    OsRng.fill_bytes(&mut seed);
+    let seed_hex = hex::encode(SigningKey::from_bytes(&seed).to_bytes());
+    std::env::set_var("LUDAO_CONFIG_DEV_SEED", seed_hex);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn open_and_init_seeds_synthetic_cases() {
+        enable_dev_config_trust_for_tests();
         let dir = tempfile::tempdir().expect("tmpdir");
         let path = dir.path().join("t.db");
         let path_str = path.to_string_lossy();

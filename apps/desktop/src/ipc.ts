@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   AssistantDraftResult,
   AssistantRuntimeStatus,
+  CapabilityGrant,
   Case,
   CaseCreateInput,
   ConflictFinding,
@@ -118,9 +119,21 @@ export const ipc = {
   assistantSetEnabled: (enabled: boolean): Promise<AssistantRuntimeStatus> =>
     call<AssistantRuntimeStatus>("assistant_set_enabled", { enabled }),
 
+  scopeGrantForMatter: (matterId: string): Promise<CapabilityGrant> =>
+    call<CapabilityGrant>("scope_grant_for_matter", { matterId }),
+
+  searchPrivateDocuments: (
+    capabilityToken: string,
+    matterId: string,
+    query: string,
+    limit = 10,
+  ): Promise<unknown[]> =>
+    call("search_private_documents", { capabilityToken, matterId, query, limit }),
+
   assistantRunDraft: (input: {
     caseId: string;
     intent: string;
+    capabilityToken: string;
   }): Promise<AssistantDraftResult> => call<AssistantDraftResult>("assistant_run_draft", { input }),
 
   assistantCancel: (taskId: string): Promise<void> => call<void>("assistant_cancel", { taskId }),

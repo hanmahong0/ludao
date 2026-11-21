@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { ipc } from "./ipc";
+import type { CapabilityGrant } from "./types";
 import { CaseBoard } from "./panels/CaseBoard";
 import { EvidenceWorkbench } from "./panels/EvidenceWorkbench";
 import { DeadlinePanel } from "./panels/DeadlinePanel";
@@ -24,6 +26,11 @@ const NAV: { key: NavKey; label: string; icon: string; desc: string }[] = [
 export default function App() {
   const [nav, setNav] = useState<NavKey>("board");
   const [activeCaseId, setActiveCaseId] = useState<string>("case-001");
+  const [capability, setCapability] = useState<CapabilityGrant | null>(null);
+
+  useEffect(() => {
+    void ipc.scopeGrantForMatter(activeCaseId).then(setCapability).catch(() => setCapability(null));
+  }, [activeCaseId]);
 
   const openEvidence = (caseId: string) => {
     setActiveCaseId(caseId);
@@ -97,6 +104,7 @@ export default function App() {
         ) : nav === "agent" ? (
           <AgentPanel
             activeCaseId={activeCaseId}
+            capabilityToken={capability?.token ?? ""}
             onSelectCase={setActiveCaseId}
           />
         ) : (

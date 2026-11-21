@@ -7,8 +7,11 @@ pub mod commands;
 pub mod config_map;
 pub mod db;
 pub mod dto;
+pub mod query_sanitize;
+pub mod scope;
 
 use assistant::AssistantSupervisor;
+use scope::ScopeRegistry;
 use dto::*;
 use rusqlite::Connection;
 use std::sync::Mutex;
@@ -202,11 +205,50 @@ fn assistant_set_enabled(
 #[tauri::command]
 fn assistant_run_draft(
     sup: State<AssistantSupervisor>,
+    scopes: State<ScopeRegistry>,
     state: State<DbState>,
     input: AssistantRunDraftInput,
 ) -> Result<AssistantDraftResultDto, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    assistant::assistant_run_draft(&conn, &sup, input)
+    assistant::assistant_run_draft(&conn, &sup, &scopes, input)
+}
+
+#[tauri::command]
+fn scope_grant_for_matter(
+    scopes: State<ScopeRegistry>,
+    state: State<DbState>,
+    matter_id: String,
+) -> Result<CapabilityGrantDto, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    if commands::case_get(&conn, &matter_id)?.is_none() {
+        return Err("scope_issue: unknown matter".into());
+    }
+    let g = scopes.issue_for_matter(&matter_id, 3600)?;
+    Ok(CapabilityGrantDto {
+        token: g.token,
+        matter_id: g.matter_id,
+        expires_at: g.expires_at.to_rfc3339(),
+    })
+}
+
+#[tauri::command]
+fn search_private_documents(
+    state: State<DbState>,
+    scopes: State<ScopeRegistry>,
+    capability_token: String,
+    matter_id: String,
+    query: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::dto::PrivatePassageHitDto>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    commands::search_private_documents(
+        &conn,
+        &scopes,
+        &capability_token,
+        &matter_id,
+        &query,
+        limit.unwrap_or(10),
+    )
 }
 
 #[tauri::command]
@@ -222,9 +264,16 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let db_path = dir.join("lurus.db");
+            if std::env::var("LUDAO_SYNTHETIC_DEV_BUNDLE")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+            {
+                db::enable_dev_config_trust_for_tests();
+            }
             let conn = db::open_and_init(&db_path.to_string_lossy())
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             app.manage(DbState(Mutex::new(conn)));
+            app.manage(ScopeRegistry::new());
             app.manage(AssistantSupervisor::new());
             Ok(())
         })
@@ -250,6 +299,8 @@ pub fn run() {
             template_list,
             conflict_scan,
             search_public_cases,
+            search_private_documents,
+            scope_grant_for_matter,
             compare_public_cases,
             assistant_status,
             assistant_set_enabled,

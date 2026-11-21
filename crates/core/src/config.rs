@@ -1,5 +1,7 @@
 //! server-config 信封：Ed25519 验签、schema 门禁、config_cache 读写。
-//! 生产构建设置 `LUDAO_PINNED_CONFIG_PUBKEY`（base64）后禁用 dev 自签。
+//!
+//! 默认 **fail-closed**：无 `LUDAO_PINNED_CONFIG_PUBKEY` 且未显式 `LUDAO_CONFIG_DEV_TRUST=1` 时，
+//! 不接受任何信封（含仓库内不可推导的开发种子）。开发/测试须设置临时 `LUDAO_CONFIG_DEV_SEED`（64 hex）。
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
@@ -8,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-/// 当前生效配置行（payload 为完整 JSON 文本）。
 #[derive(Debug, Clone)]
 pub struct ActiveConfig {
     pub kind: String,
@@ -24,6 +25,7 @@ pub enum InstallOutcome {
     StoredInvalidSchema { kind: String, config_id: String, version: String },
     RejectedSignature,
     RejectedMetaMismatch,
+    RejectedTrustPolicy,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,29 +39,37 @@ struct ConfigEnvelope {
     signature: String,
 }
 
-/// DEV 信任根（仅开发/验收用；公钥写入仓库是刻意的非生产路径）。
-const DEV_SIGNING_SEED: [u8; 32] = [
-    0x6c, 0x75, 0x64, 0x61, 0x6f, 0x2d, 0x64, 0x65, 0x76, 0x2d, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67,
-    0x2d, 0x73, 0x69, 0x67, 0x6e, 0x2d, 0x72, 0x6f, 0x6f, 0x74, 0x2d, 0x30, 0x30, 0x00, 0x00, 0x01,
-];
-
-fn dev_signing_key() -> SigningKey {
-    SigningKey::from_bytes(&DEV_SIGNING_SEED)
+pub fn dev_trust_explicitly_enabled() -> bool {
+    std::env::var("LUDAO_CONFIG_DEV_TRUST")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 fn pinned_verify_key() -> Option<VerifyingKey> {
     static CACHED: OnceLock<Option<VerifyingKey>> = OnceLock::new();
     CACHED
         .get_or_init(|| {
-            std::env::var("LUDAO_PINNED_CONFIG_PUBKEY")
-                .ok()
-                .and_then(|b64| {
-                    let bytes = B64.decode(b64.trim()).ok()?;
-                    let arr: [u8; 32] = bytes.try_into().ok()?;
-                    VerifyingKey::from_bytes(&arr).ok()
-                })
+            let b64 = std::env::var("LUDAO_PINNED_CONFIG_PUBKEY").ok()?;
+            let b64 = b64.trim();
+            if b64.is_empty() {
+                return None;
+            }
+            let bytes = B64.decode(b64).ok()?;
+            let arr: [u8; 32] = bytes.try_into().ok()?;
+            VerifyingKey::from_bytes(&arr).ok()
         })
         .clone()
+}
+
+/// 仅当 `LUDAO_CONFIG_DEV_TRUST=1` 且 `LUDAO_CONFIG_DEV_SEED`（32 字节 hex）存在时返回密钥。
+fn dev_signing_key_from_env() -> Option<SigningKey> {
+    if !dev_trust_explicitly_enabled() {
+        return None;
+    }
+    let hex = std::env::var("LUDAO_CONFIG_DEV_SEED").ok()?;
+    let bytes = hex::decode(hex.trim()).ok()?;
+    let arr: [u8; 32] = bytes.try_into().ok()?;
+    Some(SigningKey::from_bytes(&arr))
 }
 
 fn supported_schema_versions() -> &'static HashMap<&'static str, i64> {
@@ -129,8 +139,13 @@ fn verify_envelope(env: &ConfigEnvelope) -> bool {
     if let Some(pinned) = pinned_verify_key() {
         return pinned.verify(msg.as_bytes(), &signature).is_ok();
     }
-    let dev_pub = dev_signing_key().verifying_key();
-    dev_pub.verify(msg.as_bytes(), &signature).is_ok()
+    if let Some(dev_key) = dev_signing_key_from_env() {
+        return dev_key
+            .verifying_key()
+            .verify(msg.as_bytes(), &signature)
+            .is_ok();
+    }
+    false
 }
 
 fn check_payload_meta_consistency(env: &ConfigEnvelope) -> Result<(), String> {
@@ -149,7 +164,7 @@ fn check_payload_meta_consistency(env: &ConfigEnvelope) -> Result<(), String> {
         .get("version")
         .and_then(|x| x.as_str())
         .ok_or("payload.version missing")?;
-  let psv = obj
+    let psv = obj
         .get("schemaVersion")
         .and_then(|x| x.as_i64())
         .ok_or("payload.schemaVersion missing")?;
@@ -162,7 +177,7 @@ fn check_payload_meta_consistency(env: &ConfigEnvelope) -> Result<(), String> {
     Ok(())
 }
 
-/// 开发构建自签信封；生产（已 PINNED 公钥）返回 None。
+/// 开发环境自签；须 `LUDAO_CONFIG_DEV_TRUST=1` + `LUDAO_CONFIG_DEV_SEED`。已 PIN 公钥时返回 None。
 pub fn dev_seal_envelope(
     kind: &str,
     config_id: &str,
@@ -174,6 +189,7 @@ pub fn dev_seal_envelope(
     if pinned_verify_key().is_some() {
         return None;
     }
+    let key = dev_signing_key_from_env()?;
     let signature = sign_envelope(
         kind,
         config_id,
@@ -181,7 +197,7 @@ pub fn dev_seal_envelope(
         schema_version,
         effective_from,
         payload,
-        &dev_signing_key(),
+        &key,
     );
     let env = ConfigEnvelope {
         kind: kind.to_string(),
@@ -198,6 +214,10 @@ pub fn dev_seal_envelope(
 pub fn install_config(conn: &Connection, envelope_json: &str, fetched_at: &str) -> rusqlite::Result<InstallOutcome> {
     let env: ConfigEnvelope = serde_json::from_str(envelope_json)
         .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
+
+  if pinned_verify_key().is_none() && !dev_trust_explicitly_enabled() {
+        return Ok(InstallOutcome::RejectedTrustPolicy);
+    }
 
     if !verify_envelope(&env) {
         return Ok(InstallOutcome::RejectedSignature);
@@ -272,6 +292,17 @@ pub fn active_config(
 mod tests {
     use super::*;
     use crate::{apply_schema, open_encrypted};
+    use ed25519_dalek::SigningKey;
+    use std::sync::{Mutex, OnceLock};
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock")
+    }
 
     fn mem_conn() -> Connection {
         let conn = open_encrypted(":memory:", "test-key").expect("open");
@@ -279,32 +310,79 @@ mod tests {
         conn
     }
 
-    #[test]
-    fn dev_seal_install_and_active_roundtrip() {
-        let conn = mem_conn();
-        let payload = r#"{"kind":"holidays","config_id":"cn-statutory-2026","schemaVersion":1,"version":"2026.1","effectiveFrom":"2026-01-01","holidays":[]}"#;
-        let env = dev_seal_envelope(
-            "holidays",
-            "cn-statutory-2026",
-            "2026.1",
-            1,
-            Some("2026-01-01"),
-            payload,
-        )
-        .expect("dev seal");
-        let out = install_config(&conn, &env, "2026-01-01T00:00:00Z").expect("install");
-        assert_eq!(
-            out,
-            InstallOutcome::Applied {
-                kind: "holidays".into(),
-                config_id: "cn-statutory-2026".into(),
-                version: "2026.1".into(),
-            }
-        );
-        let active = active_config(&conn, "holidays", "cn-statutory-2026")
-            .expect("query")
-            .expect("some");
-        assert_eq!(active.payload, payload);
+    fn with_dev_trust<R>(f: impl FnOnce(&SigningKey) -> R) -> R {
+        let _g = env_lock();
+        std::env::remove_var("LUDAO_PINNED_CONFIG_PUBKEY");
+        let mut seed = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut seed);
+        let key = SigningKey::from_bytes(&seed);
+        let seed_hex = hex::encode(key.to_bytes());
+        std::env::set_var("LUDAO_CONFIG_DEV_TRUST", "1");
+        std::env::set_var("LUDAO_CONFIG_DEV_SEED", seed_hex);
+        let out = f(&key);
+        std::env::remove_var("LUDAO_CONFIG_DEV_TRUST");
+        std::env::remove_var("LUDAO_CONFIG_DEV_SEED");
+        out
     }
 
+    #[test]
+    fn fail_closed_without_pin_or_dev_trust() {
+        let _g = env_lock();
+        std::env::remove_var("LUDAO_PINNED_CONFIG_PUBKEY");
+        std::env::remove_var("LUDAO_CONFIG_DEV_TRUST");
+        std::env::remove_var("LUDAO_CONFIG_DEV_SEED");
+        assert!(!dev_trust_explicitly_enabled());
+        assert!(dev_seal_envelope("holidays", "evil", "9", 1, None, "{}").is_none());
+        let conn = mem_conn();
+        let fake = r#"{"kind":"holidays","config_id":"evil","version":"9","schema_version":1,"payload":"{\"kind\":\"holidays\",\"config_id\":\"evil\",\"schemaVersion\":1,\"version\":\"9\"}","signature":"AAAA"}"#;
+        let out = install_config(&conn, fake, "2026-01-01T00:00:00Z").unwrap();
+        assert_eq!(out, InstallOutcome::RejectedTrustPolicy);
+    }
+
+    #[test]
+    fn dev_trust_roundtrip_with_ephemeral_seed() {
+        with_dev_trust(|_| {
+            let conn = mem_conn();
+            let payload = r#"{"kind":"holidays","config_id":"cn-statutory-2026","schemaVersion":1,"version":"2026.1","effectiveFrom":"2026-01-01","holidays":[]}"#;
+            let env = dev_seal_envelope(
+                "holidays",
+                "cn-statutory-2026",
+                "2026.1",
+                1,
+                Some("2026-01-01"),
+                payload,
+            )
+            .expect("dev seal");
+            let out = install_config(&conn, &env, "2026-01-01T00:00:00Z").unwrap();
+            assert_eq!(
+                out,
+                InstallOutcome::Applied {
+                    kind: "holidays".into(),
+                    config_id: "cn-statutory-2026".into(),
+                    version: "2026.1".into(),
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn evil_envelope_rejected_under_dev_trust() {
+        with_dev_trust(|_dev_key| {
+            let conn = mem_conn();
+            let env = dev_seal_envelope(
+                "holidays",
+                "evil",
+                "9",
+                1,
+                Some("2026-01-01"),
+                r#"{"kind":"holidays","config_id":"evil","schemaVersion":1,"version":"9","effectiveFrom":"2026-01-01"}"#,
+            )
+            .unwrap();
+            let mut tampered: serde_json::Value = serde_json::from_str(&env).unwrap();
+            tampered["signature"] = serde_json::Value::String(B64.encode([0u8; 64]));
+            let out =
+                install_config(&conn, &tampered.to_string(), "2026-01-01T00:00:00Z").unwrap();
+            assert_eq!(out, InstallOutcome::RejectedSignature);
+        });
+    }
 }

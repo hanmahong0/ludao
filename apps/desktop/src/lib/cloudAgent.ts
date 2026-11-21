@@ -5,7 +5,10 @@ import type {
   TodayCase,
 } from "../types";
 
-// 云端服务地址：默认本地 dev 服务；可经 VITE_CLOUD_URL 覆盖。
+export const CLOUD_EXPORT_ENABLED =
+  (import.meta as unknown as { env?: Record<string, string | undefined> }).env
+    ?.VITE_CLOUD_EXPORT_ENABLED === "1";
+
 const CLOUD_URL: string =
   (import.meta as unknown as { env?: Record<string, string | undefined> }).env
     ?.VITE_CLOUD_URL ?? "http://localhost:8787";
@@ -25,6 +28,9 @@ export async function runCloudAgent(input: {
   agentType: AgentType;
   intent: string;
 }): Promise<AgentResult> {
+  if (!CLOUD_EXPORT_ENABLED) {
+    return { error: "云端出网已默认关闭。设置 VITE_CLOUD_EXPORT_ENABLED=1 后方可使用。" };
+  }
   try {
     const res = await fetch(`${CLOUD_URL}/agent`, {
       method: "POST",
@@ -50,6 +56,9 @@ export async function runCloudToday(input: {
   cases: TodayCase[];
   intent: string;
 }): Promise<AgentResult> {
+  if (!CLOUD_EXPORT_ENABLED) {
+    return { error: "云端出网已默认关闭。设置 VITE_CLOUD_EXPORT_ENABLED=1 后方可使用。" };
+  }
   try {
     const res = await fetch(`${CLOUD_URL}/today`, {
       method: "POST",
@@ -81,6 +90,9 @@ export async function runCloudGapJudge(input: {
   elementId: string;
   localReason?: string;
 }): Promise<GapJudgeOutcome> {
+  if (!CLOUD_EXPORT_ENABLED) {
+    return { error: "云端出网已默认关闭。设置 VITE_CLOUD_EXPORT_ENABLED=1 后方可使用。" };
+  }
   try {
     const res = await fetch(`${CLOUD_URL}/gap-judge`, {
       method: "POST",

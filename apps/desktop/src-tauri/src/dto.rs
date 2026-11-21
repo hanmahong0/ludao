@@ -448,6 +448,8 @@ pub struct PrivatePassageHitDto {
     pub excerpt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locator: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -465,6 +467,15 @@ pub struct AssistantRuntimeStatusDto {
     pub handshake_ok: bool,
     pub model_configured: bool,
     pub disclosure: String,
+    pub mcp_attached: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityGrantDto {
+    pub token: String,
+    pub matter_id: String,
+    pub expires_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -499,4 +510,5 @@ pub struct AssistantDraftResultDto {
 pub struct AssistantRunDraftInput {
     pub case_id: String,
     pub intent: String,
+    pub capability_token: String,
 }

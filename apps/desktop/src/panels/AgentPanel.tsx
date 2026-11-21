@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ipc } from "../ipc";
-import { runCloudAgent, runCloudToday } from "../lib/cloudAgent";
+import { CLOUD_EXPORT_ENABLED, runCloudAgent, runCloudToday } from "../lib/cloudAgent";
 import type { AgentType, AssistantRuntimeStatus, Case } from "../types";
 import { cn } from "../lib/ui";
 
@@ -34,9 +34,11 @@ const PRESETS: Preset[] = [
 
 export function AgentPanel({
   activeCaseId,
+  capabilityToken,
   onSelectCase,
 }: {
   activeCaseId: string;
+  capabilityToken: string;
   onSelectCase: (id: string) => void;
 }) {
   const [cases, setCases] = useState<Case[]>([]);
@@ -47,6 +49,7 @@ export function AgentPanel({
   const [legend, setLegend] = useState<RefTitle[]>([]);
   const [runtime, setRuntime] = useState<AssistantRuntimeStatus | null>(null);
   const [localMode, setLocalMode] = useState(true);
+  const [cloudOptIn, setCloudOptIn] = useState(false);
 
   useEffect(() => {
     void ipc.caseList().then(setCases);
@@ -65,7 +68,15 @@ export function AgentPanel({
     setError(null);
     setOutput("");
     try {
-      const res = await ipc.assistantRunDraft({ caseId: activeCaseId, intent });
+      if (!capabilityToken) {
+        setError("宿主未签发案件 capability；请重新选择案件。");
+        return;
+      }
+      const res = await ipc.assistantRunDraft({
+        caseId: activeCaseId,
+        intent,
+        capabilityToken,
+      });
       if (res.error) setError(res.error);
       else setOutput(`${res.text}\n\n[runtime: ${res.runtimeEvidence}]`);
     } catch (e) {
@@ -76,6 +87,10 @@ export function AgentPanel({
   };
 
   const run = async (preset: Preset) => {
+    if (!cloudOptIn || !CLOUD_EXPORT_ENABLED) {
+      setError("云端通道默认关闭；需构建启用 VITE_CLOUD_EXPORT_ENABLED=1 且勾选明确授权。");
+      return;
+    }
     if (running) return;
     setRunning(true);
     setActivePreset(preset.label);
@@ -156,7 +171,16 @@ export function AgentPanel({
                   checked={localMode}
                   onChange={(e) => setLocalMode(e.target.checked)}
                 />
-                优先本地草稿（不依赖云）
+                优先本地宿主工具/ZeroClaw
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={cloudOptIn}
+                  onChange={(e) => setCloudOptIn(e.target.checked)}
+                  disabled={!CLOUD_EXPORT_ENABLED}
+                />
+                明确授权云端（默认关）
               </label>
             </div>
             <p className="mt-2 text-slate-500">{runtime.disclosure}</p>

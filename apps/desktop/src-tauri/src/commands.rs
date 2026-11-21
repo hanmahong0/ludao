@@ -1516,22 +1516,28 @@ pub fn conflict_scan(conn: &Connection) -> Result<Vec<ConflictFindingDto>, Strin
 
 pub fn search_private_documents(
     conn: &Connection,
+    scope: &crate::scope::ScopeRegistry,
+    capability_token: &str,
     matter_id: &str,
     query: &str,
     limit: i64,
 ) -> Result<Vec<crate::dto::PrivatePassageHitDto>, String> {
+    scope
+        .validate(capability_token, matter_id)
+        .map_err(|e| e.to_string())?;
     if case_get(conn, matter_id)?.is_none() {
         return Err("scope_denied: unknown matter".into());
     }
-    let q = query.trim();
-    if q.is_empty() {
-        return Ok(vec![]);
-    }
-    let pattern = format!("%{q}%");
+    let q = crate::query_sanitize::normalize_private_query(query).map_err(|e| e.to_string())?;
+    let limit = crate::query_sanitize::clamp_limit(limit, 20);
+    let pattern = format!(
+        "%{}%",
+        crate::query_sanitize::escape_like_pattern(&q)
+    );
     let mut stmt = conn
         .prepare(
-            "SELECT id, case_id, name, COALESCE(seq, 0) FROM evidence \
-             WHERE case_id = ?1 AND _deleted = 0 AND name LIKE ?2 \
+            "SELECT id, case_id, name, COALESCE(seq, 0), COALESCE(original_hash, '') FROM evidence \
+             WHERE case_id = ?1 AND _deleted = 0 AND name LIKE ?2 ESCAPE '\\' \
              ORDER BY seq LIMIT ?3",
         )
         .map_err(|e| e.to_string())?;
@@ -1542,17 +1548,25 @@ pub fn search_private_documents(
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
             ))
         })
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, case_id, name, seq) = row.map_err(|e| e.to_string())?;
+        let (id, case_id, name, seq, hash) = row.map_err(|e| e.to_string())?;
+        let content_hash = if hash.is_empty() {
+            vault::sha256_hex(name.as_bytes())
+        } else {
+            hash
+        };
+        let document_version = format!("{case_id}@evidence@{content_hash}");
         out.push(crate::dto::PrivatePassageHitDto {
             passage_id: id.clone(),
-            document_version: format!("{case_id}@evidence"),
+            document_version,
             excerpt: truncate_excerpt(&name, 240),
-            locator: Some(format!("证据序号 {seq}")),
+            locator: Some(format!("evidence_seq:{seq}")),
+            content_hash: Some(content_hash),
         });
     }
     Ok(out)
@@ -1566,28 +1580,57 @@ fn truncate_excerpt(s: &str, max: usize) -> String {
     }
 }
 
-pub fn search_public_cases(
+fn map_public_hit_row(
+    row: rusqlite::Result<(
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        String,
+    )>,
+) -> Result<crate::dto::PublicCaseHitDto, String> {
+    let (passage_id, case_version, excerpt, locator, title, court, decided_at, source_id, license_status, tags_json) =
+        row.map_err(|e| e.to_string())?;
+    let similarity_note = serde_json::from_str::<Vec<String>>(&tags_json)
+        .ok()
+        .map(|t| t.join(" · "));
+    Ok(crate::dto::PublicCaseHitDto {
+        case_version,
+        title,
+        court,
+        decided_at,
+        passage_id,
+        excerpt: truncate_excerpt(&excerpt, 320),
+        locator,
+        source_id,
+        license_status,
+        similarity_note,
+    })
+}
+
+fn public_search_like(
     conn: &Connection,
-    query: &str,
+    pattern: &str,
     limit: i64,
 ) -> Result<Vec<crate::dto::PublicCaseHitDto>, String> {
-    let q = query.trim();
-    if q.is_empty() {
-        return Ok(vec![]);
-    }
-    let fts_query = q.to_string();
-    let sql = "SELECT p.passage_id, p.case_version, p.text_excerpt, p.locator, \
-               c.title, c.court, c.decided_at, c.source_id, s.license_status, c.similarity_tags \
-               FROM public_passage_fts \
-               JOIN public_passage p ON p.passage_id = public_passage_fts.passage_id \
-               JOIN public_case c ON c.case_version = p.case_version \
-               JOIN source_registry s ON s.source_id = c.source_id \
-               WHERE c.withdrawn = 0 AND s.withdrawn = 0 \
-                 AND public_passage_fts MATCH ?1 \
-               LIMIT ?2";
-    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT p.passage_id, p.case_version, p.text_excerpt, p.locator, \
+             c.title, c.court, c.decided_at, c.source_id, s.license_status, c.similarity_tags \
+             FROM public_passage p \
+             JOIN public_case c ON c.case_version = p.case_version \
+             JOIN source_registry s ON s.source_id = c.source_id \
+             WHERE c.withdrawn = 0 AND s.withdrawn = 0 AND p.text_excerpt LIKE ?1 ESCAPE '\\' \
+             LIMIT ?2",
+        )
+        .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map((fts_query, limit), |r| {
+        .query_map((pattern, limit), |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
@@ -1602,41 +1645,37 @@ pub fn search_public_cases(
             ))
         })
         .map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
-    for row in rows {
-        let (passage_id, case_version, excerpt, locator, title, court, decided_at, source_id, license_status, tags_json) =
-            row.map_err(|e| e.to_string())?;
-        let similarity_note = serde_json::from_str::<Vec<String>>(&tags_json)
-            .ok()
-            .map(|t| t.join(" · "));
-        out.push(crate::dto::PublicCaseHitDto {
-            case_version,
-            title,
-            court,
-            decided_at,
-            passage_id,
-            excerpt: truncate_excerpt(&excerpt, 320),
-            locator,
-            source_id,
-            license_status,
-            similarity_note,
-        });
-    }
-    if out.is_empty() {
-        let pattern = format!("%{q}%");
-        let mut stmt2 = conn
-            .prepare(
-                "SELECT p.passage_id, p.case_version, p.text_excerpt, p.locator, \
-                 c.title, c.court, c.decided_at, c.source_id, s.license_status, c.similarity_tags \
-                 FROM public_passage p \
-                 JOIN public_case c ON c.case_version = p.case_version \
-                 JOIN source_registry s ON s.source_id = c.source_id \
-                 WHERE c.withdrawn = 0 AND s.withdrawn = 0 AND p.text_excerpt LIKE ?1 \
-                 LIMIT ?2",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows2 = stmt2
-            .query_map((pattern, limit), |r| {
+    rows.map(map_public_hit_row).collect()
+}
+
+pub fn search_public_cases(
+    conn: &Connection,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<crate::dto::PublicCaseHitDto>, String> {
+    let limit = crate::query_sanitize::clamp_limit(limit, crate::query_sanitize::MAX_PUBLIC_LIMIT);
+    let normalized = match crate::query_sanitize::normalize_private_query(query) {
+        Ok(q) => q,
+        Err(crate::query_sanitize::QueryReject::Empty) => return Ok(vec![]),
+        Err(e) => return Err(e.to_string()),
+    };
+    let like_pattern = format!(
+        "%{}%",
+        crate::query_sanitize::escape_like_pattern(&normalized)
+    );
+
+    if let Ok(fts_q) = crate::query_sanitize::fts_and_query(&normalized) {
+        let sql = "SELECT p.passage_id, p.case_version, p.text_excerpt, p.locator, \
+                   c.title, c.court, c.decided_at, c.source_id, s.license_status, c.similarity_tags \
+                   FROM public_passage_fts \
+                   JOIN public_passage p ON p.passage_id = public_passage_fts.passage_id \
+                   JOIN public_case c ON c.case_version = p.case_version \
+                   JOIN source_registry s ON s.source_id = c.source_id \
+                   WHERE c.withdrawn = 0 AND s.withdrawn = 0 \
+                     AND public_passage_fts MATCH ?1 \
+                   LIMIT ?2";
+        if let Ok(mut stmt) = conn.prepare(sql) {
+            if let Ok(rows) = stmt.query_map((fts_q, limit), |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -1649,29 +1688,20 @@ pub fn search_public_cases(
                     r.get::<_, String>(8)?,
                     r.get::<_, String>(9)?,
                 ))
-            })
-            .map_err(|e| e.to_string())?;
-        for row in rows2 {
-            let (passage_id, case_version, excerpt, locator, title, court, decided_at, source_id, license_status, tags_json) =
-                row.map_err(|e| e.to_string())?;
-            let similarity_note = serde_json::from_str::<Vec<String>>(&tags_json)
-                .ok()
-                .map(|t| t.join(" · "));
-            out.push(crate::dto::PublicCaseHitDto {
-                case_version,
-                title,
-                court,
-                decided_at,
-                passage_id,
-                excerpt: truncate_excerpt(&excerpt, 320),
-                locator,
-                source_id,
-                license_status,
-                similarity_note,
-            });
+            }) {
+                let mut out = Vec::new();
+                for row in rows {
+                    if let Ok(hit) = map_public_hit_row(row) {
+                        out.push(hit);
+                    }
+                }
+                if !out.is_empty() {
+                    return Ok(out);
+                }
+            }
         }
     }
-    Ok(out)
+    public_search_like(conn, &like_pattern, limit)
 }
 
 pub fn compare_public_cases(conn: &Connection, case_version_a: &str, case_version_b: &str) -> Result<String, String> {
@@ -1696,21 +1726,46 @@ pub fn compare_public_cases(conn: &Connection, case_version_a: &str, case_versio
 mod legal_scope_tests {
     use super::*;
     use crate::db;
+    use crate::scope::ScopeRegistry;
 
-    #[test]
-    fn cross_matter_private_search_denied() {
+    fn test_conn() -> (rusqlite::Connection, ScopeRegistry) {
+        db::enable_dev_config_trust_for_tests();
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("scope.db");
+        let path = dir.path().join("t.db");
         let conn = db::open_and_init(&path.to_string_lossy()).unwrap();
-        let err = search_private_documents(&conn, "case-999", "借条", 3).unwrap_err();
-        assert!(err.contains("scope_denied"));
+        (conn, ScopeRegistry::new())
     }
 
     #[test]
-    fn public_search_finds_synthetic_fixture() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("fts.db");
-        let conn = db::open_and_init(&path.to_string_lossy()).unwrap();
+    fn cross_matter_private_search_denied_with_grant() {
+        let (conn, scope) = test_conn();
+        let g = scope.issue_for_matter("case-001", 600).unwrap();
+        let err =
+            search_private_documents(&conn, &scope, &g.token, "case-002", "合成", 3).unwrap_err();
+        assert!(err.contains("scope_denied"));
+        assert!(err.contains("mismatch"));
+    }
+
+    #[test]
+    fn wildcard_private_query_rejected() {
+        let (conn, scope) = test_conn();
+        let g = scope.issue_for_matter("case-001", 600).unwrap();
+        let err = search_private_documents(&conn, &scope, &g.token, "case-001", "%", 3).unwrap_err();
+        assert!(err.contains("wildcard"));
+    }
+
+    #[test]
+    fn public_search_percent_rejected() {
+        let (conn, _) = test_conn();
+        let err = search_public_cases(&conn, "%", 5).unwrap_err();
+        assert!(err.contains("wildcard"));
+        let err = search_public_cases(&conn, &"%".repeat(200), 5).unwrap_err();
+        assert!(err.contains("too_long"));
+    }
+
+    #[test]
+    fn public_search_chinese_fixture() {
+        let (conn, _) = test_conn();
         let hits = search_public_cases(&conn, "借贷", 5).unwrap();
         assert!(!hits.is_empty());
         assert!(hits[0].excerpt.contains("合成"));
